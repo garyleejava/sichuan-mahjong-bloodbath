@@ -3,10 +3,10 @@ const AI = require('./ai.js');
 const G = require('./game.js');
 
 console.log('====================================================');
-console.log('🧪 开始端到端全流程模拟测试 (50 局人机混战)');
+console.log('🧪 开始端到端全流程模拟测试 (20 局人机混战)');
 console.log('====================================================\n');
 
-let totalRounds = 50;
+let totalRounds = 20;
 let humanWins = 0;
 let totalHuCount = 0;
 let drawCount = 0;

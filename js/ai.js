@@ -325,6 +325,55 @@
     return Math.min(1.0, 0.85 * L.defendWeight);
   }
 
+  // 判定手牌是否具备合理的清一色可行性 (避免手牌杂牌过多或已碰杂门牌时误判)
+  function evalQingPotential(hand, melds, lack) {
+    const nonLackSuits = MJ.SUITS.filter(s => s !== lack);
+    if (!nonLackSuits || nonLackSuits.length < 2) return null;
+
+    const meldCount = melds.length;
+
+    for (const s of nonLackSuits) {
+      // 1. 若已有任何非目标花色的副露，则绝对无法做该花色的清一色！
+      const hasClutterMeld = melds.some(m => m.tiles[0][0] !== s);
+      if (hasClutterMeld) continue;
+
+      const inHand = hand.filter(t => t[0] === s).length;
+      const inMelds = melds.filter(m => m.tiles[0][0] === s).length * 3;
+      const totalSuitCount = inHand + inMelds;
+      const otherSuit = nonLackSuits.find(x => x !== s);
+      const otherInHand = hand.filter(t => t[0] === otherSuit).length;
+
+      // 2. 根据手牌中杂牌（另一门）数量及手牌纯度判定清一色可行性：
+      // - 门清 (0副露，手牌13~14张)：手牌中该花色必须 >= 9 张（杂牌 <= 4 张，且手牌纯度 >= 69%）
+      // - 1副露 (手牌10~11张)：手牌中该花色必须 >= 8 张（杂牌 <= 2~3 张，手牌纯度 >= 75%）
+      // - 2副露 (手牌7~8张)：手牌中该花色必须 >= 6 张（杂牌 <= 1~2 张，手牌纯度 >= 80%）
+      // - 3副露 (手牌4~5张)：手牌中该花色必须 >= 3~4 张（杂牌 <= 1 张）
+      let isViable = false;
+      if (meldCount === 0) {
+        if (inHand >= 9 && otherInHand <= 4) isViable = true;
+        else if (inHand >= 8 && otherInHand <= 3) isViable = true;
+      } else if (meldCount === 1) {
+        if (inHand >= 8 && otherInHand <= 3) isViable = true;
+      } else if (meldCount === 2) {
+        if (inHand >= 6 && otherInHand <= 2) isViable = true;
+      } else if (meldCount >= 3) {
+        if (inHand >= 3 && otherInHand <= 1) isViable = true;
+      }
+
+      if (isViable) {
+        return {
+          suit: s,
+          inHand,
+          inMelds,
+          totalSuitCount,
+          otherSuit,
+          otherInHand,
+        };
+      }
+    }
+    return null;
+  }
+
   // ---- 6. 核心弃牌决策引擎 (chooseDiscard) ----
   function chooseDiscard(game, seat, level) {
     const L = LEVELS[level] || LEVELS.normal;
@@ -348,33 +397,7 @@
     const meldCount = pl.melds.length;
     const nonLackSuits = MJ.SUITS.filter(s => s !== lack);
 
-    let targetQingSuit = null;
-    const suitCounts = {};
-    for (const s of nonLackSuits) {
-      const inHand = hand.filter(t => t[0] === s).length;
-      const inMelds = pl.melds.filter(m => m.tiles[0][0] === s).length * 3;
-      suitCounts[s] = inHand + inMelds;
-    }
-    for (const s of nonLackSuits) {
-      if (suitCounts[s] >= 8 && Math.random() < L.qingTendency) {
-        targetQingSuit = s;
-        break;
-      }
-    }
-
-    if (targetQingSuit) {
-      const otherSuit = nonLackSuits.find(s => s !== targetQingSuit);
-      const otherTiles = hand.filter(t => t[0] === otherSuit);
-      if (otherTiles.length > 0) {
-        otherTiles.sort((a, b) => {
-          const ca = hand.filter(x => x === a).length;
-          const cb = hand.filter(x => x === b).length;
-          if (ca !== cb) return ca - cb;
-          return Math.abs(+a[1] - 5) - Math.abs(+b[1] - 5);
-        });
-        return otherTiles[0];
-      }
-    }
+    const qingInfo = evalQingPotential(hand, pl.melds, lack);
 
     let threat = 0;
     for (let p = 0; p < 4; p++) {
@@ -399,6 +422,11 @@
       const ukeire = ukeInfo.ukeire;
 
       let attackScore = (8 - afterShanten) * 1000 + ukeire * 15;
+
+      // 清一色战略加分 (仅在符合严苛清一色可行性时触发)
+      if (qingInfo && candidate[0] === qingInfo.otherSuit && Math.random() < L.qingTendency) {
+        attackScore += 350;
+      }
 
       const counts = MJ.toCounts(tempHand);
       for (let i = 0; i < 27; i++) {
@@ -470,9 +498,12 @@
         return { type: 'pass' };
       }
 
-      const sameSuitCount = pl.hand.filter(t => t[0] === tile[0]).length + pl.melds.filter(m => m.tiles[0][0] === tile[0]).length * 3;
-      if (sameSuitCount >= 7) {
-        return pung;
+      const qingInfo = evalQingPotential(pl.hand, pl.melds, pl.lack);
+      if (qingInfo && tile[0] !== qingInfo.suit) {
+        return { type: 'pass' }; // 正在冲刺清一色，拒碰杂门牌
+      }
+      if (qingInfo && tile[0] === qingInfo.suit) {
+        return pung; // 碰目标清一色花色，催化清一色
       }
 
       const currentSh = calcShanten(pl.hand, pl.melds.length, pl.lack);
@@ -547,17 +578,9 @@
       };
     }
 
-    // 2. 统计大番走向
-    const suitCounts = {};
-    for (const s of nonLackSuits) {
-      const inHand = hand.filter(t => t[0] === s).length;
-      const inMelds = pl.melds.filter(m => m.tiles[0][0] === s).length * 3;
-      suitCounts[s] = inHand + inMelds;
-    }
-    let qingSuit = null;
-    for (const s of nonLackSuits) {
-      if (suitCounts[s] >= 8) qingSuit = s;
-    }
+    // 2. 统计大番走向与严谨的清一色可行性判定
+    const qingInfo = evalQingPotential(hand, pl.melds, lack);
+    const qingSuit = qingInfo ? qingInfo.suit : null;
 
     const counts = MJ.toCounts(hand);
     let pairCount = 0;
@@ -608,12 +631,13 @@
         tag = '⚡ 立即听牌';
         const waitsStr = ukeInfo.effectiveTiles.map(e => `${MJ.tileShortName(e.tile)}(余${e.unseen}张)`).join('、');
         reason = `打出【${cName}】后立即进入【听牌】状态！胡牌张为：${waitsStr} (共 ${ukeire} 张)。胡牌概率极高，建议立即打出！`;
-      } else if (qingSuit && isSevenPairPotential && isQingDiscard) {
+      } else if (qingInfo && isSevenPairPotential && isQingDiscard) {
         tag = '💎 清七对极品规划';
         reason = `手中已有 ${pairCount} 个对子且【${MJ.SUIT_NAMES[qingSuit]}】占比极高，极有希望做出顶级大番【清七对】(6番/32分)！打出杂门单张【${cName}】，兼顾暗七对与清一色双重收益！`;
-      } else if (isQingDiscard) {
+      } else if (qingInfo && isQingDiscard) {
         tag = '💎 清一色大番规划';
-        reason = `手中已有 ${suitCounts[qingSuit]} 张【${MJ.SUIT_NAMES[qingSuit]}】，清一色基础雄厚！果断打出杂门牌【${cName}】，全力冲刺【清一色】(4番/8分，满盘翻8倍)，收益远超混门平胡！`;
+        const meldText = qingInfo.inMelds > 0 ? `（含已副露 ${qingInfo.inMelds} 张，共 ${qingInfo.totalSuitCount} 张）` : '';
+        reason = `手牌中已有 ${qingInfo.inHand} 张【${MJ.SUIT_NAMES[qingSuit]}】${meldText}，杂门仅剩 ${qingInfo.otherInHand} 张！果断打出杂门牌【${cName}】，全力冲刺【清一色】(4番/8分，满盘翻8倍)，收益远超混门平胡！`;
       } else if (isSevenPairPotential && counts[MJ.tileIndex(candidate)] === 1) {
         tag = '🀄 暗七对单张取舍';
         reason = `当前门清且已持有 ${pairCount} 个对子，正处于【暗七对】(4番) 黄金成型期！打出单张【${cName}】，完整保护手中全部对子，向暗七对稳步推进。`;
@@ -650,10 +674,11 @@
     const best = rankedList[0];
 
     let macro = '当前阶段以【快速上听】为主，尽量保留两面顺子搭子与对子。';
-    if (qingSuit && isSevenPairPotential) {
-      macro = `🎯 核心战略：你手牌同时具备【暗七对】(${pairCount}对) 与【清一色】(${suitCounts[qingSuit]}张${MJ.SUIT_NAMES[qingSuit]}) 双重底子，建议冲刺顶级大番【清七对】(6番/32分)！保持门清不碰牌，单张杂牌依次舍出。`;
-    } else if (qingSuit) {
-      macro = `🎯 核心战略：你手牌中的【${MJ.SUIT_NAMES[qingSuit]}】花色占比极高，建议坚定走【清一色】(4番/8分) 路线，将另一门杂牌尽数打出！`;
+    if (qingInfo && isSevenPairPotential) {
+      macro = `🎯 核心战略：你手牌同时具备【暗七对】(${pairCount}对) 与【清一色】(${qingInfo.totalSuitCount}张${MJ.SUIT_NAMES[qingSuit]}) 双重底子，建议冲刺顶级大番【清七对】(6番/32分)！保持门清不碰牌，单张杂牌依次舍出。`;
+    } else if (qingInfo) {
+      const meldText = qingInfo.inMelds > 0 ? `（含已副露 ${qingInfo.inMelds} 张，共 ${qingInfo.totalSuitCount} 张）` : '';
+      macro = `🎯 核心战略：你手牌中的【${MJ.SUIT_NAMES[qingSuit]}】花色占比极高${meldText}，建议坚定走【清一色】(4番/8分) 路线，将仅剩的杂牌尽数打出！`;
     } else if (isSevenPairPotential) {
       macro = `🎯 核心战略：你手中已有 ${pairCount} 个对子，建议坚持【暗七对】(4番) 路线，不碰牌、留对子，单张多余牌逐一舍出。`;
     } else if (maxOppMeld >= 3) {
