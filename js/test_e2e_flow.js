@@ -3,7 +3,7 @@ const AI = require('./ai.js');
 const G = require('./game.js');
 
 console.log('====================================================');
-console.log('🧪 开始端到端全流程模拟测试 (20 局人机混战)');
+console.log('🧪 开始端到端全流程模拟测试 (20 局人机混战，包含换三张)');
 console.log('====================================================\n');
 
 let totalRounds = 20;
@@ -12,13 +12,23 @@ let totalHuCount = 0;
 let drawCount = 0;
 
 for (let r = 1; r <= totalRounds; r++) {
+  const isSwap = (r % 2 === 0);
   const g = G.createGame({
     round: r,
     dealer: (r - 1) % 4,
+    enableSwap: isSwap,
     aiLevel: 'hard'
   });
 
-  // 1. 定缺
+  // 1. 换三张
+  if (g.phase === 'swap') {
+    G.advance(g);
+    g.players[0].chosenSwapTiles = AI.chooseSwap3(g.players[0].hand);
+    g.humanSwap = true;
+    G.advance(g);
+  }
+
+  // 2. 定缺
   G.advance(g);
   for (let i = 0; i < 4; i++) {
     g.players[i].lack = AI.chooseLack(g.players[i].hand);
@@ -26,7 +36,7 @@ for (let r = 1; r <= totalRounds; r++) {
   g.humanLack = true;
   G.advance(g);
 
-  // 2. 对局主循环
+  // 3. 对局主循环
   let steps = 0;
   while (!G.isOver(g) && steps < 500) {
     steps++;
@@ -71,16 +81,15 @@ for (let r = 1; r <= totalRounds; r++) {
 
       // 处理副露
       const gc = G.gatherClaims(g);
-      let claims = gc.allClaims || [];
-      if (gc.need === 'humanClaim') {
-        // 人类副露选择
-        const hu = gc.options.find(o => o.type === 'hu');
+      let claims = gc.aiClaims ? gc.aiClaims.slice() : [];
+      if (gc.needHumanClaim && gc.humanOptions) {
+        const hu = gc.humanOptions.find(o => o.type === 'hu');
         if (hu) {
           claims.push({ type: 'hu', seat: 0, info: hu.info, tile: hu.tile });
           humanWins++;
           totalHuCount++;
         } else {
-          const pung = gc.options.find(o => o.type === 'pung');
+          const pung = gc.humanOptions.find(o => o.type === 'pung');
           if (pung && Math.random() < 0.4) {
             claims.push({ type: 'pung', seat: 0, tile: pung.tile });
           }
@@ -91,9 +100,10 @@ for (let r = 1; r <= totalRounds; r++) {
         const hus = claims.filter(c => c.type === 'hu');
         totalHuCount += hus.length;
         const rc = G.resolveClaims(g, claims);
-        if (rc.done) break;
+        if (rc.type === 'over') break;
       } else {
-        if (!G.nextTurn(g)) break;
+        const rc = G.resolveClaims(g, []);
+        if (rc.type === 'over') break;
       }
 
     } else {
@@ -113,15 +123,15 @@ for (let r = 1; r <= totalRounds; r++) {
 
         // 处理副露
         const gc = G.gatherClaims(g);
-        let claims = gc.allClaims || [];
-        if (gc.need === 'humanClaim') {
-          const hu = gc.options.find(o => o.type === 'hu');
+        let claims = gc.aiClaims ? gc.aiClaims.slice() : [];
+        if (gc.needHumanClaim && gc.humanOptions) {
+          const hu = gc.humanOptions.find(o => o.type === 'hu');
           if (hu) {
             claims.push({ type: 'hu', seat: 0, info: hu.info, tile: hu.tile });
             humanWins++;
             totalHuCount++;
           } else {
-            const pung = gc.options.find(o => o.type === 'pung');
+            const pung = gc.humanOptions.find(o => o.type === 'pung');
             if (pung && Math.random() < 0.4) {
               claims.push({ type: 'pung', seat: 0, tile: pung.tile });
             }
@@ -132,15 +142,16 @@ for (let r = 1; r <= totalRounds; r++) {
           const hus = claims.filter(c => c.type === 'hu');
           totalHuCount += hus.length;
           const rc = G.resolveClaims(g, claims);
-          if (rc.done) break;
+          if (rc.type === 'over') break;
         } else {
-          if (!G.nextTurn(g)) break;
+          const rc = G.resolveClaims(g, []);
+          if (rc.type === 'over') break;
         }
       }
     }
   }
 
-  // 3. 结算
+  // 4. 结算
   const res = G.settle(g);
   if (res.isDraw) drawCount++;
   const sumNet = res.net.reduce((a, b) => a + b, 0);

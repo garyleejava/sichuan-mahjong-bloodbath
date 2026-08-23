@@ -522,6 +522,149 @@
   }
 
   // ============================================================
+  // ---- 8.5 换三张深度策略引擎 (chooseSwap3 & analyzeSwapAdvice) ----
+  // ============================================================
+  function evalTileKeepValue(tile, handInSuit) {
+    const n = +tile[1];
+    const counts = MJ.toCounts(handInSuit);
+    const idx = MJ.tileIndex(tile);
+    const inSuit = idx % 9;
+
+    let value = 0;
+    if (counts[idx] >= 3) value += 40;
+    else if (counts[idx] === 2) value += 20;
+
+    const hasPrev2 = (inSuit >= 2 && counts[idx - 2] > 0);
+    const hasPrev1 = (inSuit >= 1 && counts[idx - 1] > 0);
+    const hasNext1 = (inSuit <= 7 && counts[idx + 1] > 0);
+    const hasNext2 = (inSuit <= 6 && counts[idx + 2] > 0);
+
+    if (hasPrev1 && hasNext1) value += 30; // 顺子中张 (如4在345)
+    if (hasPrev2 && hasPrev1) value += 28; // 顺子边张 (如5在345)
+    if (hasNext1 && hasNext2) value += 28; // 顺子边张 (如3在345)
+
+    if (inSuit >= 1 && inSuit <= 7 && (hasPrev1 || hasNext1)) {
+      if (inSuit >= 2 && inSuit <= 6) value += 16; // 优质两面搭子 (如34, 45, 56)
+      else value += 12; // 23 或 78 搭子
+    }
+    if (hasPrev2 || hasNext2) value += 8; // 嵌张搭子 (如13, 24)
+    if ((inSuit === 0 && hasNext1) || (inSuit === 8 && hasPrev1)) value += 6; // 边张搭子 (如12, 89)
+
+    // 孤张判定 (1/9 幺九最易舍弃换出)
+    if (inSuit === 0 || inSuit === 8) value -= 5;
+    else if (inSuit === 1 || inSuit === 7) value -= 2;
+    else value += 2;
+
+    return value;
+  }
+
+  function chooseSwap3InSuit(handInSuit) {
+    const scored = handInSuit.map(t => ({
+      tile: t,
+      val: evalTileKeepValue(t, handInSuit),
+      n: +t[1],
+      dist: Math.min(Math.abs(+t[1] - 1), Math.abs(+t[1] - 9))
+    }));
+
+    scored.sort((a, b) => {
+      if (a.val !== b.val) return a.val - b.val;
+      if (a.dist !== b.dist) return a.dist - b.dist;
+      return a.n - b.n;
+    });
+
+    return scored.slice(0, 3).map(s => s.tile);
+  }
+
+  function evaluateSuitForSwap(suit, hand) {
+    const handInSuit = hand.filter(t => t[0] === suit);
+    if (handInSuit.length < 3) return null;
+
+    const count = handInSuit.length;
+    const picked3 = chooseSwap3InSuit(handInSuit);
+    const suitStructure = evalSuitStructure(handInSuit);
+
+    let otherMaxSuitCount = 0;
+    for (const s of MJ.SUITS) {
+      if (s !== suit) {
+        const c = hand.filter(t => t[0] === s).length;
+        if (c > otherMaxSuitCount) otherMaxSuitCount = c;
+      }
+    }
+
+    let desirability = 1000;
+    let tag = "✨ 优化牌姿";
+    let reason = "";
+
+    if (count === 3) {
+      desirability += 600;
+      tag = "🚀 完美清门 (开局清缺)";
+      const tileNames = picked3.map(MJ.tileName).join("、");
+      reason = "推荐换出【" + MJ.SUIT_NAMES[suit] + "】花色的【" + tileNames + "】。你手中仅有 3 张" + MJ.SUIT_NAMES[suit] + "字散牌（无成型顺子/刻子搭子），全数换出后手牌该门彻底归零，定缺直接清空该门，开局两门牌运转极度顺畅，极速上听！";
+    } else if (otherMaxSuitCount >= 8) {
+      desirability += 500;
+      tag = "💎 冲刺清一色 (除杂留纯)";
+      const tileNames = picked3.map(MJ.tileName).join("、");
+      let dominant = MJ.SUITS.find(s => s !== suit && hand.filter(t => t[0] === s).length === otherMaxSuitCount) || "s";
+      reason = "你手牌中【" + MJ.SUIT_NAMES[dominant] + "】花色多达 " + otherMaxSuitCount + " 张，具备顶级清一色底子！果断换出杂门【" + MJ.SUIT_NAMES[suit] + "】（【" + tileNames + "】），剔除杂牌，全力冲刺【清一色】(4番/8分，满盘翻8倍)！";
+    } else if (count <= 5) {
+      desirability += 200;
+      tag = "🛡️ 弃弱留强 (削减杂门)";
+      const tileNames = picked3.map(MJ.tileName).join("、");
+      reason = "手牌中【" + MJ.SUIT_NAMES[suit] + "】花色共有 " + count + " 张，换出其中最弱的 3 张孤张/边张【" + tileNames + "】后，剩余手牌顺子与对子搭子极其完整，手牌张力最大化！";
+    } else {
+      const tileNames = picked3.map(MJ.tileName).join("、");
+      reason = "换出【" + MJ.SUIT_NAMES[suit] + "】花色的【" + tileNames + "】，整体保留手牌关键搭子。";
+    }
+
+    desirability -= suitStructure * 2.5;
+    if (count >= 7) desirability -= 800;
+    if (count >= 9) desirability -= 2000;
+
+    return {
+      suit,
+      suitName: MJ.SUIT_NAMES[suit],
+      count,
+      tiles: picked3,
+      tag,
+      score: desirability,
+      reason,
+    };
+  }
+
+  function chooseSwap3(hand) {
+    const candidates = [];
+    for (const s of MJ.SUITS) {
+      const evalRes = evaluateSuitForSwap(s, hand);
+      if (evalRes) candidates.push(evalRes);
+    }
+    if (!candidates.length) return [];
+    candidates.sort((a, b) => b.score - a.score);
+    return candidates[0].tiles;
+  }
+
+  function analyzeSwapAdvice(hand) {
+    const candidates = [];
+    for (const s of MJ.SUITS) {
+      const evalRes = evaluateSuitForSwap(s, hand);
+      if (evalRes) candidates.push(evalRes);
+    }
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => b.score - a.score);
+    const best = candidates[0];
+
+    return {
+      tiles: best.tiles,
+      suit: best.suit,
+      suitName: best.suitName,
+      tag: best.tag,
+      star: "★★★★★",
+      reason: best.reason,
+      macroStrategy: "🎯 换三张核心策略：优先换出恰好3张的孤张杂门，彻底清空一门定缺；若单门极长(>=8张)，坚决换出杂门冲刺清一色大番！",
+      candidates,
+    };
+  }
+
+  // ============================================================
   // ---- 9. 雀神 AI 教练可解释性教学与推荐系统 (analyzeHandAdvice) ----
   // ============================================================
   function analyzeHandAdvice(game, seat) {
@@ -705,6 +848,10 @@
     chooseDiscard,
     act,
     claim,
+    chooseSwap3,
+    analyzeSwapAdvice,
+    chooseSwap3InSuit,
+    evalTileKeepValue,
     analyzeHandAdvice,
     LEVELS,
   };

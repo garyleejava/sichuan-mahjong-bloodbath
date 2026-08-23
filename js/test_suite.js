@@ -112,16 +112,31 @@ const tenpaiHandClean = ['m1','m2','m3','m4','m5','m6','s1','s2','s3','s4','s5',
 const waitsClean = MJ.tenpai(tenpaiHandClean, 0, 'p');
 assert(waitsClean.length === 1 && waitsClean[0] === 'm9', '单钓九万听牌成功');
 
-// 4. 完整 100 局血战到底蒙特卡洛仿真测试
+// 4. 完整 100 局血战到底蒙特卡洛仿真测试 (包含换三张与无换三张混合对局)
 console.log('\n--- [仿真测试 4] 100 局血战到底全自动化仿真运行 ---');
 let drawCount = 0;
 let multiHuCount = 0;
 let gangCount = 0;
 
 for (let r = 1; r <= 100; r++) {
-  const g = G.createGame({ round: r, dealer: (r - 1) % 4, aiLevel: r % 3 === 0 ? 'hard' : (r % 2 === 0 ? 'normal' : 'easy') });
+  const isSwapRound = (r % 2 === 0);
+  const g = G.createGame({
+    round: r,
+    dealer: (r - 1) % 4,
+    enableSwap: isSwapRound,
+    aiLevel: r % 3 === 0 ? 'hard' : (r % 2 === 0 ? 'normal' : 'easy'),
+  });
+
+  // 换三张处理
+  if (g.phase === 'swap') {
+    G.advance(g);
+    g.players[0].chosenSwapTiles = AI.chooseSwap3(g.players[0].hand);
+    g.humanSwap = true;
+    G.advance(g);
+  }
+
+  // 定缺处理
   G.advance(g);
-  // 模拟定缺
   for (let i = 0; i < 4; i++) {
     g.players[i].lack = AI.chooseLack(g.players[i].hand);
   }
@@ -181,7 +196,7 @@ for (let r = 1; r <= 100; r++) {
 
   // 校验守恒定律: 净得分之和必须等于 0 (零和博弈)
   const sumNet = res.net.reduce((a, b) => a + b, 0);
-  assert(sumNet === 0, `第 ${r} 局结算零和守恒校验 (净分和: ${sumNet})`);
+  assert(sumNet === 0, `第 ${r} 局结算零和守恒校验 (换三张:${isSwapRound ? '开' : '关'}, 净分和: ${sumNet})`);
 }
 
 console.log(`\n🎉 100 局自动化牌局仿真测试全部通过！`);

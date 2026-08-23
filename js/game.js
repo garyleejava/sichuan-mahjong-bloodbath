@@ -11,6 +11,24 @@
   const PLAYER_NAMES = ['你', '小川 (下家)', '阿蓉 (对家)', '老李 (上家)'];
   const SEAT_WINDS = ['东', '南', '西', '北'];
 
+  const SWAP_DIRECTIONS = {
+    opposite: {
+      id: "opposite",
+      name: "对家互换",
+      donorFor: [2, 3, 0, 1], // Seat i receives from donorFor[i]
+    },
+    clockwise: {
+      id: "clockwise",
+      name: "顺时针 (换给下家)",
+      donorFor: [3, 0, 1, 2],
+    },
+    counterclockwise: {
+      id: "counterclockwise",
+      name: "逆时针 (换给上家)",
+      donorFor: [1, 2, 3, 0],
+    },
+  };
+
   function createGame(opts) {
     opts = opts || {};
     const rng = opts.rng || Math.random;
@@ -19,15 +37,22 @@
     const round = opts.round || 1;
     const dealer = opts.dealer !== undefined ? opts.dealer : 0;
 
+    const enableSwap = opts.enableSwap !== undefined ? opts.enableSwap : true;
+
     const g = {
       round,
       dealer,
+      enableSwap,
       wall: [],
       wallPtr: 0,
       wallEnd: 0,
       players: [],
       turn: dealer,
-      phase: 'lack', // lack | turn_act | pung_act | claim_phase | over
+      phase: enableSwap ? "swap" : "lack", // swap | lack | turn_act | pung_act | claim_phase | over
+      swapDice: null,
+      swapDirection: null,
+      swapRecord: null,
+      humanSwap: false,
       pendingDiscard: null,
       discardFrom: -1,
       lastDraw: null,
@@ -52,6 +77,8 @@
         melds: [],
         discards: [],
         lack: null,
+        chosenSwapTiles: null,
+        swapReceived: null,
         isHuman: (i === 0),
         hu: null,
         out: false,
@@ -60,7 +87,7 @@
       });
     }
 
-    // 洗牌与发牌
+    // 洗牌与发牌 (4家各发13张)
     g.wall = MJ.buildWall();
     MJ.shuffle(g.wall, rng);
 
@@ -69,10 +96,13 @@
         g.players[i].hand.push(g.wall[g.wallPtr++]);
       }
     }
-    // 庄家起手摸第14张牌
-    const dealerFirstDraw = g.wall[g.wallPtr++];
-    g.players[dealer].hand.push(dealerFirstDraw);
-    g.lastDraw = dealerFirstDraw;
+
+    // 若未开启换三张，庄家起手直接摸第14张牌
+    if (!enableSwap) {
+      const dealerFirstDraw = g.wall[g.wallPtr++];
+      g.players[dealer].hand.push(dealerFirstDraw);
+      g.lastDraw = dealerFirstDraw;
+    }
 
     for (let i = 0; i < 4; i++) sortHand(g.players[i].hand);
 
@@ -84,6 +114,102 @@
       if (a[0] !== b[0]) return MJ.SUITS.indexOf(a[0]) - MJ.SUITS.indexOf(b[0]);
       return +a[1] - +b[1];
     });
+  }
+
+  // ---- 换三张 (Swap 3 Tiles) ----
+  function autoSwap(game) {
+    for (let i = 0; i < 4; i++) {
+      if (game.players[i].chosenSwapTiles && game.players[i].chosenSwapTiles.length === 3) continue;
+      if (game.players[i].isHuman) continue;
+      game.players[i].chosenSwapTiles = AI.chooseSwap3(game.players[i].hand);
+    }
+  }
+
+  function setHumanSwap(game, tiles) {
+    if (!tiles || tiles.length !== 3) throw new Error("换三张必须选择 3 张牌");
+    const suit = tiles[0][0];
+    if (!tiles.every(t => t[0] === suit)) throw new Error("换三张必须选择同花色的 3 张牌");
+    
+    // 校验牌确实在玩家手牌中
+    const tempHand = game.players[0].hand.slice();
+    for (const t of tiles) {
+      const idx = tempHand.indexOf(t);
+      if (idx < 0) throw new Error("选中的牌不在手牌中: " + t);
+      tempHand.splice(idx, 1);
+    }
+
+    game.players[0].chosenSwapTiles = tiles.slice();
+    game.humanSwap = true;
+  }
+
+  function allSwapSet(game) {
+    return game.players.every(p => p.chosenSwapTiles && p.chosenSwapTiles.length === 3);
+  }
+
+  function doSwap(game, explicitDirection, explicitDice) {
+    autoSwap(game);
+    if (!allSwapSet(game)) {
+      throw new Error("尚有玩家未完成选牌，无法执行换三张");
+    }
+
+    const dice = explicitDice || (Math.floor(Math.random() * 6) + 1);
+    let dirKey = explicitDirection;
+    if (!dirKey) {
+      if (dice <= 2) dirKey = "opposite";
+      else if (dice <= 4) dirKey = "clockwise";
+      else dirKey = "counterclockwise";
+    }
+
+    const dirInfo = SWAP_DIRECTIONS[dirKey] || SWAP_DIRECTIONS.clockwise;
+
+    // 1. 各家扣出选定的 3 张换牌
+    const outTiles = [];
+    for (let i = 0; i < 4; i++) {
+      outTiles[i] = game.players[i].chosenSwapTiles.slice();
+      for (const t of outTiles[i]) {
+        const idx = game.players[i].hand.indexOf(t);
+        if (idx >= 0) game.players[i].hand.splice(idx, 1);
+      }
+    }
+
+    // 2. 根据交换拓扑转移并收入新牌
+    for (let i = 0; i < 4; i++) {
+      const donor = dirInfo.donorFor[i];
+      const received = outTiles[donor].slice();
+      game.players[i].hand.push(...received);
+      sortHand(game.players[i].hand);
+      game.players[i].swapReceived = {
+        fromSeat: donor,
+        fromName: game.players[donor].name,
+        tiles: received,
+      };
+    }
+
+    game.swapDice = dice;
+    game.swapDirection = dirKey;
+    game.swapRecord = {
+      dice,
+      direction: dirKey,
+      directionName: dirInfo.name,
+    };
+
+    // 3. 换三张结束，庄家起手摸第14张牌
+    const dealerFirstDraw = game.wall[game.wallPtr++];
+    game.players[game.dealer].hand.push(dealerFirstDraw);
+    sortHand(game.players[game.dealer].hand);
+    game.lastDraw = dealerFirstDraw;
+
+    game.phase = "lack";
+    const humanRec = game.players[0].swapReceived;
+    const humanRecStr = humanRec ? humanRec.tiles.map(MJ.tileShortName).join(" ") : "";
+    pushLog(game, -1, "🔀 换三张完成: 掷出 " + dice + " 点 [" + dirInfo.name + "]" + (humanRecStr ? "，你收到来自 " + humanRec.fromName + " 的【" + humanRecStr + "】" : ""));
+
+    return {
+      dice,
+      direction: dirKey,
+      directionName: dirInfo.name,
+      humanReceived: humanRec,
+    };
   }
 
   // ---- 定缺 ----
@@ -548,20 +674,30 @@
     return { type: 'next_turn', seat: game.turn, drawnTile: game.lastDraw };
   }
 
-  // ---- 推进阶段 (开局定缺) ----
+  // ---- 推进阶段 (开局换三张与定缺) ----
   function advance(game) {
-    if (game.phase === 'lack') {
-      autoLack(game);
-      if (!game.players[0].lack) return { need: 'humanLack' };
-      if (allLackSet(game)) {
-        game.phase = 'turn_act';
-        game.turn = game.dealer;
-        pushLog(game, -1, '定缺完成: ' + game.players.map(p => p.name + '缺' + MJ.SUIT_NAMES[p.lack]).join(', '));
-        return { need: 'turn_act', seat: game.turn };
+    if (game.phase === "swap") {
+      autoSwap(game);
+      if (!game.players[0].chosenSwapTiles) return { need: "humanSwap" };
+      if (allSwapSet(game)) {
+        const swapRes = doSwap(game);
+        return { need: "swap_done", swapResult: swapRes };
       }
-      return { need: 'humanLack' };
+      return { need: "humanSwap" };
     }
-    return { need: 'none' };
+
+    if (game.phase === "lack") {
+      autoLack(game);
+      if (!game.players[0].lack) return { need: "humanLack" };
+      if (allLackSet(game)) {
+        game.phase = "turn_act";
+        game.turn = game.dealer;
+        pushLog(game, -1, "定缺完成: " + game.players.map(p => p.name + "缺" + MJ.SUIT_NAMES[p.lack]).join(", "));
+        return { need: "turn_act", seat: game.turn };
+      }
+      return { need: "humanLack" };
+    }
+    return { need: "none" };
   }
 
   // ---- 血战到底终局结算 ----
@@ -717,6 +853,11 @@
   const G = {
     createGame,
     sortHand,
+    autoSwap,
+    setHumanSwap,
+    allSwapSet,
+    doSwap,
+    SWAP_DIRECTIONS,
     autoLack,
     setHumanLack,
     allLackSet,

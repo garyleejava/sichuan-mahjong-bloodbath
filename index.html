@@ -21,6 +21,7 @@
     </div>
     <div class="top-controls">
       <button id="coachBtn" class="btn btn-coach active" title="开启/关闭 雀神AI教练指导 [快捷键 T]">🤖 教练: 开</button>
+      <button id="swapToggleBtn" class="btn btn-swap active" title="开启/关闭 开局换三张规则">🔀 换三张: 开</button>
       <div class="select-group">
         <label for="gameSpeedSelect">对局速度</label>
         <select id="gameSpeedSelect" title="调节 AI 摸打与动画节奏">
@@ -189,6 +190,74 @@
     </button>
   </div>
 
+  <!-- 换三张选择弹窗 -->
+  <div class="modal hidden" id="swapModal">
+    <div class="modal-card modal-swap">
+      <div class="modal-header">
+        <h2>🔀 四川麻将 · 换三张阶段</h2>
+        <p class="modal-desc">请从手牌中挑选 <strong>同花色 3 张牌</strong> 换出。可点击手牌选牌，或使用 AI 教练一键智能选牌。</p>
+      </div>
+
+      <!-- 雀神教练换三张分析与一键推荐 -->
+      <div class="swap-coach-box" id="swapCoachBox">
+        <div class="swap-coach-head">
+          <div class="swap-coach-title">
+            <span class="coach-icon">🤖</span>
+            <span>雀神教练 · 换三张推荐</span>
+          </div>
+          <div class="swap-coach-tag" id="swapCoachTag">🚀 完美清门 (开局清缺)</div>
+        </div>
+        <div class="swap-coach-body">
+          <div class="swap-coach-tiles-row">
+            <div class="swap-coach-tiles-wrap" id="swapCoachTilesWrap"></div>
+            <button class="btn btn-coach" id="swapAutoSelectBtn">🤖 一键智能选 3 张</button>
+          </div>
+          <div class="swap-coach-reason" id="swapCoachReason">
+            正在分析最优换牌组合...
+          </div>
+        </div>
+      </div>
+
+      <!-- 手牌选牌交互区 -->
+      <div class="swap-selection-section">
+        <div class="swap-sec-title">
+          <span>点击下方手牌进行挑选：</span>
+          <span class="swap-count-badge" id="swapCountBadge">已选 0 / 3 张</span>
+        </div>
+        <div class="swap-hand-grid" id="swapHandGrid"></div>
+      </div>
+
+      <div class="swap-footer">
+        <div class="swap-status-hint" id="swapStatusHint">💡 提示：换三张必须选择同花色的 3 张牌</div>
+        <button class="btn btn-primary btn-large" id="confirmSwapBtn" disabled>确认换出 (0/3)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 换三张结果展示弹窗 -->
+  <div class="modal hidden" id="swapRevealModal">
+    <div class="modal-card modal-swap-reveal">
+      <div class="modal-header">
+        <h2 id="swapRevealTitle">🎲 换三张拓扑转移</h2>
+        <p class="modal-desc" id="swapRevealDesc">骰子掷出 3 点：顺时针（换给下家）</p>
+      </div>
+      <div class="swap-reveal-content">
+        <div class="swap-reveal-box">
+          <div class="swap-reveal-label">📤 你换出的牌：</div>
+          <div class="swap-reveal-tiles" id="swapRevealOutTiles"></div>
+        </div>
+        <div class="swap-reveal-arrow">➔</div>
+        <div class="swap-reveal-box highlight">
+          <div class="swap-reveal-label" id="swapRevealInLabel">📥 从上家换得新牌：</div>
+          <div class="swap-reveal-tiles" id="swapRevealInTiles"></div>
+        </div>
+      </div>
+      <div class="swap-reveal-footer">
+        <button class="btn btn-primary btn-large" id="closeSwapRevealBtn">收下新牌 · 进入定缺 ➔</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 定缺选择弹窗 -->
   <div class="modal hidden" id="lackModal">
     <div class="modal-card modal-lack">
@@ -237,6 +306,7 @@
       </div>
       <div class="rules-content">
         <h3>🎓 雀神实战教程篇（从入门到高手）</h3>
+        <p>• <strong>0. 换三张进阶诀窍</strong>：开局发完 13 张初始手牌后，4 家各自挑选同花色 3 张牌换出。掷骰子决定交换方向（1/2 对家互换，3/4 顺时针换给下家，5/6 逆时针换给上家）。核心换牌哲学为“<strong>少散必换，清一色必留</strong>”：手中恰好有 3 张散牌孤张时全数换出，手牌直接清空该门，定缺瞬间完成，开局极速上听！</p>
         <p>• <strong>1. 定缺三字诀</strong>：“少先缺、散次缺、单门长做清一色”。开局如果某门仅 0~2 张直接定缺；若三门张数接近，看哪门没有搭子（如孤张1、9）优先定缺。</p>
         <p>• <strong>2. 搭子效率进阶</strong>：两面搭子 (如45万进36万，8张有效进张) > 嵌张搭子 (如35万进4万，4张有效进张) > 边张搭子 (如12万仅进3万，4张有效进张) > 孤张。手牌超载时，优先拆孤张，其次拆边张/嵌张。</p>
         <p>• <strong>3. 清一色做牌法</strong>：四川麻将中清一色价值高达 4 番 (8倍底分)。当单门花色达到 8 张以上时，哪怕暂时牺牲一点上听速度，也要坚决打掉另一门杂牌，大番回报远超平胡！</p>

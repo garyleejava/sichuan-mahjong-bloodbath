@@ -25,6 +25,10 @@
   let coachCollapsed = false;
   let lastAdvice = null;
   let previewTile = null;
+  let enableSwap = true;
+  let swapSelectedTiles = [];
+  let swapNewTiles = [];
+  let swapAdvice = null;
 
   // 速度配置映射 (毫秒)
   const SPEED_CONFIG = {
@@ -156,6 +160,18 @@
   const $ = (id) => document.getElementById(id);
 
 
+  function updateSwapBtn() {
+    const btn = $('swapToggleBtn');
+    if (!btn) return;
+    if (enableSwap) {
+      btn.classList.add('active');
+      btn.textContent = '🔀 换三张: 开';
+    } else {
+      btn.classList.remove('active');
+      btn.textContent = '🔀 换三张: 关';
+    }
+  }
+
   function updateCoachBtn() {
     const btn = $('coachBtn');
     if (!btn) return;
@@ -197,9 +213,35 @@
       playSound('btn');
     };
 
+    $('swapToggleBtn').onclick = () => {
+      enableSwap = !enableSwap;
+      updateSwapBtn();
+      playSound('btn');
+      flashLog(enableSwap ? '开局换三张规则已开启' : '开局换三张规则已关闭');
+    };
+
+    $('swapAutoSelectBtn').onclick = () => {
+      if (!swapAdvice || !swapAdvice.tiles) return;
+      playSound('tap');
+      swapSelectedTiles = swapAdvice.tiles.slice();
+      updateSwapModalState();
+    };
+
+    $('confirmSwapBtn').onclick = () => {
+      onConfirmSwap();
+    };
+
+    $('closeSwapRevealBtn').onclick = () => {
+      playSound('btn');
+      $('swapRevealModal').classList.add('hidden');
+      render();
+      showLackModal();
+    };
+
     $('coachBtn').onclick = () => {
       coachEnabled = !coachEnabled;
       updateCoachBtn();
+    updateSwapBtn();
       playSound('btn');
       flashLog(coachEnabled ? '雀神 AI 教练已开启 (快捷键 T)' : '雀神 AI 教练已关闭 (快捷键 T)');
       render();
@@ -377,8 +419,10 @@
 
   // ---- 5. 开局与轮次推进 ----
   function startRound() {
-    game = G.createGame({ aiLevel, round, dealer });
+    game = G.createGame({ aiLevel, round, dealer, enableSwap });
     selectedTile = null;
+    swapSelectedTiles = [];
+    swapNewTiles = [];
     isBusy = false;
     hideAllModals();
     clearMatchingHighlights();
@@ -387,7 +431,9 @@
     const ev = G.advance(game);
     render();
 
-    if (ev.need === 'humanLack') {
+    if (ev.need === 'humanSwap') {
+      showSwapModal();
+    } else if (ev.need === 'humanLack') {
       showLackModal();
     } else {
       stepGame();
@@ -406,10 +452,137 @@
   }
 
   function hideAllModals() {
+    $('swapModal').classList.add('hidden');
+    $('swapRevealModal').classList.add('hidden');
     $('lackModal').classList.add('hidden');
     $('resultModal').classList.add('hidden');
     $('rulesModal').classList.add('hidden');
     $('actionBar').classList.add('hidden');
+  }
+
+  // ---- 5.5 换三张交互系统 (Swap UI) ----
+  function showSwapModal() {
+    const hand = game.players[0].hand;
+    swapSelectedTiles = [];
+    swapAdvice = MJAI.analyzeSwapAdvice(hand);
+
+    // 渲染教练分析卡片
+    if (swapAdvice) {
+      $('swapCoachTag').textContent = swapAdvice.tag;
+      $('swapCoachReason').innerHTML = `<strong>【${swapAdvice.suitName}】</strong>${swapAdvice.reason}`;
+      
+      const tilesWrap = $('swapCoachTilesWrap');
+      tilesWrap.innerHTML = '';
+      swapAdvice.tiles.forEach(t => {
+        tilesWrap.appendChild(createTileElement(t, 'small'));
+      });
+    }
+
+    // 渲染选牌网格
+    const grid = $('swapHandGrid');
+    grid.innerHTML = '';
+    hand.forEach((t) => {
+      const tileEl = createTileElement(t, '');
+      tileEl.onclick = () => {
+        playSound('tap');
+        const idx = swapSelectedTiles.indexOf(t);
+        if (idx >= 0) {
+          swapSelectedTiles.splice(idx, 1);
+        } else {
+          if (swapSelectedTiles.length >= 3) {
+            flashLog('换三张最多只能选择 3 张牌');
+            return;
+          }
+          if (swapSelectedTiles.length > 0 && swapSelectedTiles[0][0] !== t[0]) {
+            // 换花色时切换为当前选中的花色
+            swapSelectedTiles = [t];
+          } else {
+            swapSelectedTiles.push(t);
+          }
+        }
+        updateSwapModalState();
+      };
+      grid.appendChild(tileEl);
+    });
+
+    updateSwapModalState();
+    $('swapModal').classList.remove('hidden');
+  }
+
+  function updateSwapModalState() {
+    const grid = $('swapHandGrid');
+    const tiles = grid.querySelectorAll('.tile');
+    const hand = game.players[0].hand;
+
+    // 更新选中状态
+    const selectedCounts = {};
+    swapSelectedTiles.forEach(t => {
+      selectedCounts[t] = (selectedCounts[t] || 0) + 1;
+    });
+
+    const usedCounts = {};
+    tiles.forEach((el, idx) => {
+      const t = hand[idx];
+      usedCounts[t] = (usedCounts[t] || 0) + 1;
+      if (selectedCounts[t] && usedCounts[t] <= selectedCounts[t]) {
+        el.classList.add('selected');
+      } else {
+        el.classList.remove('selected');
+      }
+    });
+
+    const count = swapSelectedTiles.length;
+    $('swapCountBadge').textContent = `已选 ${count} / 3 张`;
+
+    const confirmBtn = $('confirmSwapBtn');
+    const hint = $('swapStatusHint');
+
+    if (count === 3) {
+      const suit = swapSelectedTiles[0][0];
+      const suitName = MJ.SUIT_NAMES[suit];
+      hint.innerHTML = `<span style="color:#15803d;font-weight:800;">✅ 已选择同门【${suitName}】3 张牌，可确认换出</span>`;
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = `确认换出【${swapSelectedTiles.map(MJ.tileShortName).join(' ')}】`;
+    } else if (count > 0) {
+      const suitName = MJ.SUIT_NAMES[swapSelectedTiles[0][0]];
+      hint.textContent = `已选 ${count} 张【${suitName}】，还需选 ${3 - count} 张同门牌`;
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = `确认换出 (${count}/3)`;
+    } else {
+      hint.textContent = '💡 提示：换三张必须选择同花色的 3 张牌';
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = '确认换出 (0/3)';
+    }
+  }
+
+  function onConfirmSwap() {
+    if (swapSelectedTiles.length !== 3) return;
+    playSound('btn');
+    $('swapModal').classList.add('hidden');
+
+    G.setHumanSwap(game, swapSelectedTiles);
+    const res = G.advance(game);
+    const swapResult = res.swapResult;
+
+    swapNewTiles = (swapResult && swapResult.humanReceived && swapResult.humanReceived.tiles) ? swapResult.humanReceived.tiles.slice() : [];
+
+    playSound('draw');
+
+    // 渲染结果弹窗
+    $('swapRevealTitle').textContent = `🎲 换三张拓扑转移`;
+    $('swapRevealDesc').textContent = `骰子掷出 ${swapResult.dice} 点：${swapResult.directionName}`;
+
+    const outWrap = $('swapRevealOutTiles');
+    outWrap.innerHTML = '';
+    swapSelectedTiles.forEach(t => outWrap.appendChild(createTileElement(t, 'small')));
+
+    const inWrap = $('swapRevealInTiles');
+    inWrap.innerHTML = '';
+    swapNewTiles.forEach(t => inWrap.appendChild(createTileElement(t, 'small')));
+
+    $('swapRevealInLabel').textContent = `📥 从【${swapResult.humanReceived ? swapResult.humanReceived.fromName : '对手'}】换得新牌：`;
+
+    $('swapRevealModal').classList.remove('hidden');
   }
 
   function showLackModal() {
@@ -917,6 +1090,15 @@
         coachBadge.className = 'coach-badge';
         coachBadge.textContent = '★ 推荐';
         tileEl.appendChild(coachBadge);
+      }
+
+      // 换三张新换入的牌标记高亮呼吸灯与角标
+      if (swapNewTiles && swapNewTiles.includes(t)) {
+        tileEl.classList.add('swap-received-tile');
+        const sBadge = document.createElement('span');
+        sBadge.className = 'swap-received-badge';
+        sBadge.textContent = '✨ 换入';
+        tileEl.appendChild(sBadge);
       }
 
       // 刚摸上来的第14张牌加独立右侧间隔与摸牌角标
