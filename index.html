@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>四川麻将 · 血战到底</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 顶部状态栏 -->
+  <header class="top-bar">
+    <div class="brand">
+      <span class="brand-icon">🀄</span>
+      <span class="brand-text">四川麻将 · 血战到底</span>
+    </div>
+    <div class="meta">
+      <div class="meta-item"><span class="meta-label">局数</span><span id="roundInfo" class="meta-val">第 1 局</span></div>
+      <div class="meta-item"><span class="meta-label">庄家</span><span id="windInfo" class="meta-val">东风 · 你</span></div>
+      <div class="meta-item"><span class="meta-label">牌墙</span><span id="wallInfo" class="meta-val highlight">余 108</span></div>
+    </div>
+    <div class="top-controls">
+      <button id="coachBtn" class="btn btn-coach active" title="开启/关闭 雀神AI教练指导 [快捷键 T]">🤖 教练: 开</button>
+      <div class="select-group">
+        <label for="gameSpeedSelect">对局速度</label>
+        <select id="gameSpeedSelect" title="调节 AI 摸打与动画节奏">
+          <option value="fast">极速</option>
+          <option value="normal" selected>标准</option>
+          <option value="slow">悠闲</option>
+        </select>
+      </div>
+      <div class="select-group">
+        <label for="aiLevelSelect">AI难度</label>
+        <select id="aiLevelSelect">
+          <option value="easy">入门</option>
+          <option value="normal" selected>普通</option>
+          <option value="hard">高手</option>
+        </select>
+      </div>
+      <button id="soundBtn" class="btn btn-icon" title="音效开关">🔊</button>
+      <button id="rulesBtn" class="btn btn-secondary">📖 规则与教程</button>
+      <button id="newGameBtn" class="btn btn-primary">🔄 重开</button>
+    </div>
+  </header>
+
+  <!-- 牌桌主体 -->
+  <main class="table">
+    <!-- 对家 (Top, 阿蓉) -->
+    <section class="seat seat-top" id="seat2">
+      <div class="seat-header">
+        <span class="avatar">🤖</span>
+        <span class="seat-name">阿蓉 (对家)</span>
+        <span class="seat-wind" id="wind2">西</span>
+        <span class="seat-tag" id="tag2"></span>
+        <span class="seat-score" id="score2">0</span>
+      </div>
+      <div class="melds" id="melds2"></div>
+      <div class="hand-closed" id="closed2"></div>
+      <div class="discards-container">
+        <div class="discards" id="river2"></div>
+      </div>
+    </section>
+
+    <!-- 上家 (Left, 老李) -->
+    <section class="seat seat-left" id="seat3">
+      <div class="seat-header">
+        <span class="avatar">🤖</span>
+        <span class="seat-name">老李 (上家)</span>
+        <span class="seat-wind" id="wind3">北</span>
+        <span class="seat-tag" id="tag3"></span>
+        <span class="seat-score" id="score3">0</span>
+      </div>
+      <div class="melds" id="melds3"></div>
+      <div class="hand-closed" id="closed3"></div>
+      <div class="discards-container">
+        <div class="discards" id="river3"></div>
+      </div>
+    </section>
+
+    <!-- 牌桌中心 (罗盘、当前轮次指示与局况日志) -->
+    <section class="center-area" id="centerArea">
+      <div class="compass" id="compass">
+        <div class="compass-wind wind-n" id="cWind2">西</div>
+        <div class="compass-wind wind-e" id="cWind1">南</div>
+        <div class="compass-wind wind-s active" id="cWind0">东</div>
+        <div class="compass-wind wind-w" id="cWind3">北</div>
+        <div class="compass-center">
+          <div class="compass-dice" id="compassTiles">108</div>
+          <div class="compass-label">余牌</div>
+        </div>
+      </div>
+      <div class="live-log" id="liveLog">
+        <div class="log-line hi">四川麻将 · 血战到底 准备开始</div>
+      </div>
+
+      <!-- 雀神 AI 教练深度分析看板 (Coach HUD) -->
+      <div class="coach-panel" id="coachPanel">
+        <div class="coach-head">
+          <div class="coach-head-title">
+            <span class="coach-icon">🤖</span>
+            <span>雀神教练 · 实战手牌剖析</span>
+          </div>
+          <button class="coach-collapse-btn" id="coachCollapseBtn" title="折叠/展开">▾</button>
+        </div>
+        <div class="coach-body" id="coachBody">
+          <div class="coach-rec-row">
+            <div class="coach-rec-tile-wrap" id="coachRecTileWrap"></div>
+            <div class="coach-rec-meta">
+              <div class="coach-rec-tag" id="coachRecTag">🚀 进张最大化</div>
+              <div class="coach-rec-stars" id="coachRecStars">★★★★★</div>
+            </div>
+          </div>
+          <div class="coach-reason" id="coachReason">
+            正在分析最优做牌路径...
+          </div>
+          <div class="coach-comparison" id="coachComparison">
+            <div class="coach-comp-title">候选打法对比：</div>
+            <div class="coach-comp-list" id="coachCompList"></div>
+          </div>
+          <div class="coach-macro" id="coachMacro">
+            💡 宏观建议：以快速上听为主，保留优质顺子搭子。
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 下家 (Right, 小川) -->
+    <section class="seat seat-right" id="seat1">
+      <div class="seat-header">
+        <span class="avatar">🤖</span>
+        <span class="seat-name">小川 (下家)</span>
+        <span class="seat-wind" id="wind1">南</span>
+        <span class="seat-tag" id="tag1"></span>
+        <span class="seat-score" id="score1">0</span>
+      </div>
+      <div class="melds" id="melds1"></div>
+      <div class="hand-closed" id="closed1"></div>
+      <div class="discards-container">
+        <div class="discards" id="river1"></div>
+      </div>
+    </section>
+
+    <!-- 玩家自己 (Bottom, 屏幕下方) -->
+    <section class="seat seat-bottom" id="seat0">
+      <div class="discards-container human-river-wrap">
+        <div class="discards" id="river0"></div>
+      </div>
+      
+      <!-- 听牌状态提示看板 -->
+      <div class="ting-bar hidden" id="tingBar">
+        <div class="ting-header">
+          <span class="ting-icon">💡</span>
+          <span class="ting-title" id="tingTitle">已听牌</span>
+        </div>
+        <div class="ting-tiles" id="tingTiles"></div>
+      </div>
+
+      <div class="human-controls-row">
+        <div class="seat-header">
+          <span class="avatar">🧑</span>
+          <span class="seat-name">你</span>
+          <span class="seat-wind" id="wind0">东</span>
+          <span class="seat-tag" id="tag0"></span>
+          <span class="seat-score" id="score0">0</span>
+        </div>
+        <div class="melds" id="melds0"></div>
+      </div>
+
+      <div class="hand human-hand" id="hand0"></div>
+    </section>
+  </main>
+
+  <!-- 浮动动作菜单 (碰/杠/胡/过/出牌) -->
+  <div class="actions-panel hidden" id="actionBar">
+    <button class="btn act-btn btn-pass" data-act="pass" title="快捷键: 空格 / Esc">
+      <span class="btn-hotkey">[空格]</span> 过
+    </button>
+    <button class="btn act-btn btn-pung" data-act="pung" title="快捷键: P">
+      <span class="btn-hotkey">[P]</span> ⚡ 碰
+    </button>
+    <button class="btn act-btn btn-kong" data-act="kong" title="快捷键: K">
+      <span class="btn-hotkey">[K]</span> 💥 杠
+    </button>
+    <button class="btn act-btn btn-hu" data-act="hu" title="快捷键: H">
+      <span class="btn-hotkey">[H]</span> 🎉 胡牌
+    </button>
+    <button class="btn act-btn btn-discard hidden" id="discardBtn" data-act="discard" title="快捷键: 双击 / 回车">
+      <span class="btn-hotkey">[↵]</span> 出牌
+    </button>
+  </div>
+
+  <!-- 定缺选择弹窗 -->
+  <div class="modal hidden" id="lackModal">
+    <div class="modal-card modal-lack">
+      <div class="modal-header">
+        <h2>🀄 请选择本局定缺花色</h2>
+        <p class="modal-desc">四川麻将必须定缺一门，手牌打完缺门花色后方可胡牌。</p>
+      </div>
+      <div class="lack-advice" id="lackAdvice">💡 推荐：正在分析手牌...</div>
+      <div class="lack-options">
+        <button class="lack-btn lack-m" data-lack="m">
+          <span class="lk-char">万</span>
+          <span class="lk-sub">一万 ~ 九万</span>
+        </button>
+        <button class="lack-btn lack-p" data-lack="p">
+          <span class="lk-char">筒</span>
+          <span class="lk-sub">一筒 ~ 九筒</span>
+        </button>
+        <button class="lack-btn lack-s" data-lack="s">
+          <span class="lk-char">条</span>
+          <span class="lk-sub">一条 ~ 九条</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 结算弹窗 -->
+  <div class="modal hidden" id="resultModal">
+    <div class="modal-card modal-result">
+      <div class="modal-header">
+        <h2 id="resultTitle">🎉 本局结算</h2>
+      </div>
+      <div class="result-scroll" id="resultBody"></div>
+      <div class="result-footer">
+        <div class="total-summary" id="totalSummary"></div>
+        <button class="btn btn-primary btn-large" id="nextRoundBtn">下一局 ➔</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 规则与教程说明弹窗 -->
+  <div class="modal hidden" id="rulesModal">
+    <div class="modal-card modal-rules">
+      <div class="modal-header">
+        <h2>📖 四川麻将 · 血战到底 规则与实战学堂</h2>
+        <button class="modal-close" id="closeRulesBtn">✕</button>
+      </div>
+      <div class="rules-content">
+        <h3>🎓 雀神实战教程篇（从入门到高手）</h3>
+        <p>• <strong>1. 定缺三字诀</strong>：“少先缺、散次缺、单门长做清一色”。开局如果某门仅 0~2 张直接定缺；若三门张数接近，看哪门没有搭子（如孤张1、9）优先定缺。</p>
+        <p>• <strong>2. 搭子效率进阶</strong>：两面搭子 (如45万进36万，8张有效进张) > 嵌张搭子 (如35万进4万，4张有效进张) > 边张搭子 (如12万仅进3万，4张有效进张) > 孤张。手牌超载时，优先拆孤张，其次拆边张/嵌张。</p>
+        <p>• <strong>3. 清一色做牌法</strong>：四川麻将中清一色价值高达 4 番 (8倍底分)。当单门花色达到 8 张以上时，哪怕暂时牺牲一点上听速度，也要坚决打掉另一门杂牌，大番回报远超平胡！</p>
+        <p>• <strong>4. 七对保护机制</strong>：起手若有 4 对以上，尽量不要碰牌！保持门清走暗七对 (4番) 或龙七对 (5番)。</p>
+        <p>• <strong>5. 攻守兼备防放炮</strong>：后期对手若已副露 2~3 组（特别是同门牌），表明极大概率已听牌。此时自身若未听牌，切莫打中张生张，应紧跟打场上已见 3~4 张的绝张或对手打过的现物防守！</p>
+
+        <h3>⌨️ 键盘快捷键</h3>
+        <p>• <strong>[T]</strong>：一键开启 / 隐藏 雀神 AI 教练实战指导。</p>
+        <p>• <strong>[空格] / [回车]</strong>：确认打出选中的手牌 / 快速跳过副露。</p>
+        <p>• <strong>[H]</strong>：胡牌 | <strong>[P]</strong>：碰牌 | <strong>[K]</strong>：杠牌 | <strong>[Esc]</strong>：关闭弹窗。</p>
+        <p>• <strong>[←] / [→] 方向键</strong>：左右选牌。</p>
+
+        <h3>1. 核心玩法规则</h3>
+        <p>• 仅使用万、筒、条三门共 108 张牌，无风字牌，不可吃牌，仅可碰、杠、胡。</p>
+        <p>• <strong>强制定缺</strong>：开局必须选定一门不要的花色，有缺门牌必须强制优先打出，手中有缺门不可胡牌。</p>
+        <p>• <strong>血战到底</strong>：一家胡牌后牌局不结束，胡牌者退出，其余未胡玩家继续摸打，直到摸完牌墙或仅剩 1 人。</p>
+        <p>• <strong>一炮多响</strong>：一张弃牌可同时供多家胡牌。</p>
+        
+        <h3>2. 刮风下雨 (杠分)</h3>
+        <p>• <strong>暗杠 (下雨)</strong>：向所有未胡玩家各收 2 分。</p>
+        <p>• <strong>明杠/直杠 (刮风)</strong>：点杠者向杠牌者付 2 分。</p>
+        <p>• <strong>补杠/巴杠 (刮风)</strong>：向所有未胡玩家各收 1 分。</p>
+        <p>• <strong>呼叫转移</strong>：若杠牌后打出点炮，本轮杠牌收入全额转移给胡牌者。</p>
+
+        <h3>3. 终局流局结算</h3>
+        <p>• <strong>查花猪</strong>：牌摸完时手牌仍有缺门花色为花猪，赔给所有非花猪 16 分满番并退还所有杠分。</p>
+        <p>• <strong>查大叫</strong>：未听牌者赔给已听牌者其可能胡的最大番数分值，并退还所有杠分。</p>
+
+        <h3>4. 番型一览</h3>
+        <p>• 平胡 (1番/1分) | 对对胡 (2番/2分) | 清一色 (4番/8分) | 七对 (4番/8分) | 金钩钓 (4番/8分)</p>
+        <p>• 带根 (+1番/根) | 自摸 (+1番) | 杠上开花 (+1番) | 杠上炮 (+1番) | 抢杠胡 (+1番) | 海底 (+1番)</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 特效浮层 (胡牌/碰/杠) -->
+  <div class="fx-layer pointer-none" id="fxLayer"></div>
+</div>
+
+<script src="js/engine.js"></script>
+<script src="js/ai.js"></script>
+<script src="js/game.js"></script>
+<script src="js/ui.js"></script>
+</body>
+</html>

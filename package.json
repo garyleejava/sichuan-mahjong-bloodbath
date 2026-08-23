@@ -1,0 +1,22 @@
+{
+  "name": "sichuan-mahjong-bloodbath",
+  "version": "1.0.0",
+  "description": "四川麻将·血战到底高品质网页单机游戏与雀神 AI 实战教练教学系统",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node js/test_suite.js && node js/test_e2e_flow.js && node js/test_coach_advisor.js"
+  },
+  "keywords": [
+    "mahjong",
+    "sichuan-mahjong",
+    "bloodbath",
+    "ai",
+    "shanten",
+    "ukeire",
+    "explainable-ai",
+    "xai"
+  ],
+  "author": "Gary Lee",
+  "license": "MIT"
+}
