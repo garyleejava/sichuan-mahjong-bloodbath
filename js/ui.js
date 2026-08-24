@@ -22,7 +22,7 @@
   let totalScores = [0, 0, 0, 0];
   let soundEnabled = true;
   let coachEnabled = true;
-  let coachCollapsed = false;
+  let coachCollapsed = (typeof window !== "undefined" && window.innerWidth <= 768);
   let lastAdvice = null;
   let previewTile = null;
   let enableSwap = true;
@@ -247,12 +247,16 @@
       render();
     };
 
-    $('coachCollapseBtn').onclick = () => {
+    const toggleCoachCollapse = () => {
       coachCollapsed = !coachCollapsed;
       $('coachPanel').classList.toggle('collapsed', coachCollapsed);
       $('coachCollapseBtn').textContent = coachCollapsed ? '▴' : '▾';
       playSound('btn');
+      if (lastAdvice) renderCoachPanel(lastAdvice, selectedTile || lastAdvice.bestDiscard);
     };
+    $('coachCollapseBtn').onclick = (e) => { e.stopPropagation(); toggleCoachCollapse(); };
+    const cHead = $('coachHead');
+    if (cHead) cHead.onclick = toggleCoachCollapse;
 
     $('rulesBtn').onclick = () => {
       playSound('btn');
@@ -1324,6 +1328,15 @@
       // 标签与星级
       $('coachRecTag').textContent = targetAdvice.tag || '🚀 进张最大化';
       $('coachRecStars').textContent = targetAdvice.star || '★★★★★';
+
+      const headTitle = document.querySelector('.coach-head-title span:last-child');
+      if (headTitle) {
+        if (coachCollapsed && targetAdvice && targetAdvice.tile) {
+          headTitle.textContent = '推荐: 【' + MJ.tileShortName(targetAdvice.tile) + '】' + (targetAdvice.tag ? ' (' + targetAdvice.tag + ')' : '');
+        } else {
+          headTitle.textContent = '雀神教练 · 实战手牌剖析';
+        }
+      }
 
       // 详细可解释理由
       $('coachReason').innerHTML = targetAdvice.reason;
