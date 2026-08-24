@@ -29,6 +29,57 @@
     },
   };
 
+  
+  function clonePlayer(p) {
+    return {
+      seat: p.seat,
+      name: p.name,
+      wind: p.wind,
+      hand: p.hand.slice(),
+      melds: (p.melds || []).map(m => ({
+        type: m.type,
+        tiles: m.tiles.slice(),
+        from: m.from,
+        concealed: !!m.concealed,
+      })),
+      discards: p.discards.slice(),
+      lack: p.lack,
+      isHuman: p.isHuman,
+      hu: p.hu ? Object.assign({}, p.hu) : null,
+      out: p.out,
+      score: p.score,
+      gangGain: p.gangGain,
+      chosenSwapTiles: p.chosenSwapTiles ? p.chosenSwapTiles.slice() : null,
+      swapReceived: p.swapReceived ? Object.assign({}, p.swapReceived) : null,
+    };
+  }
+
+  function recordSnapshot(game, actionType, desc, actor, extra) {
+    if (!game.history) game.history = [];
+    const stepIndex = game.history.length;
+    const snapshot = {
+      stepIndex,
+      phase: game.phase,
+      turn: game.turn,
+      wallCount: wallCount(game),
+      wallPtr: game.wallPtr,
+      pendingDiscard: game.pendingDiscard,
+      discardFrom: game.discardFrom,
+      lastDraw: game.lastDraw,
+      actionType, // deal | swap | lack | draw | discard | pung | kong | hu | settle
+      desc: desc || "",
+      actor: actor !== undefined ? actor : game.turn,
+      actionTile: (extra && extra.actionTile) || null,
+      eval: (extra && extra.eval) || null,
+      extra: extra || null,
+      players: game.players.map(clonePlayer),
+      winners: (game.winners || []).slice(),
+      log: (game.log || []).slice(-10),
+    };
+    game.history.push(snapshot);
+    return snapshot;
+  }
+
   function createGame(opts) {
     opts = opts || {};
     const rng = opts.rng || Math.random;
@@ -66,6 +117,7 @@
       aiLevel,
       baseScore,
       humanLack: false,
+      history: [],
     };
 
     for (let i = 0; i < 4; i++) {
@@ -105,6 +157,8 @@
     }
 
     for (let i = 0; i < 4; i++) sortHand(g.players[i].hand);
+
+    recordSnapshot(g, "deal", "🀄 开局发牌完成 (4家各发13张手牌)", -1);
 
     return g;
   }
@@ -202,7 +256,15 @@
     game.phase = "lack";
     const humanRec = game.players[0].swapReceived;
     const humanRecStr = humanRec ? humanRec.tiles.map(MJ.tileShortName).join(" ") : "";
-    pushLog(game, -1, "🔀 换三张完成: 掷出 " + dice + " 点 [" + dirInfo.name + "]" + (humanRecStr ? "，你收到来自 " + humanRec.fromName + " 的【" + humanRecStr + "】" : ""));
+    const swapDesc = "🔀 换三张完成: 掷出 " + dice + " 点 [" + dirInfo.name + "]" + (humanRecStr ? "，你收到来自 " + humanRec.fromName + " 的【" + humanRecStr + "】" : "");
+    pushLog(game, -1, swapDesc);
+    recordSnapshot(game, "swap", swapDesc, -1, {
+      dice,
+      direction: dirKey,
+      directionName: dirInfo.name,
+      humanReceived: humanRec,
+      actionTile: humanRec ? humanRec.tiles : null,
+    });
 
     return {
       dice,
@@ -371,6 +433,13 @@
     const idx = pl.hand.indexOf(tile);
     if (idx < 0) throw new Error('弃牌不在手中: ' + tile);
 
+    let moveEval = null;
+    try {
+      if (AI && AI.evaluateMoveQuality) {
+        moveEval = AI.evaluateMoveQuality(pl.hand, pl.melds, pl.lack, tile, game, seat);
+      }
+    } catch (e) {}
+
     pl.hand.splice(idx, 1);
     pl.discards.push(tile);
     game.pendingDiscard = tile;
@@ -380,6 +449,10 @@
     game.turnCount++;
 
     pushLog(game, seat, '打出 ' + MJ.tileName(tile));
+    recordSnapshot(game, 'discard', pl.name + ' 打出【' + MJ.tileShortName(tile) + '】', seat, {
+      actionTile: tile,
+      eval: moveEval,
+    });
   }
 
   function doPung(game, seat, tile) {
@@ -404,6 +477,10 @@
     game.turn = seat;
     game.phase = 'pung_act';
     pushLog(game, seat, '碰 ' + MJ.tileName(tile));
+    recordSnapshot(game, 'pung', pl.name + ' 碰【' + MJ.tileShortName(tile) + '】 (来自 ' + game.players[from].name + ')', seat, {
+      actionTile: tile,
+      from,
+    });
   }
 
   function doKong(game, seat, tile, mode) {
@@ -480,6 +557,10 @@
     game.gangTransactions.push(currentGangRecord);
     game.kongTurnRecord = currentGangRecord;
     game.pendingDiscard = null;
+    recordSnapshot(game, 'kong', pl.name + (mode === 'an' ? ' 暗杠' : (mode === 'add' ? ' 补杠' : ' 明杠')) + '【' + MJ.tileShortName(tile) + '】', seat, {
+      actionTile: tile,
+      mode,
+    });
 
     // 杠后从尾部摸牌
     const drawn = drawTail(game);
@@ -526,6 +607,10 @@
     } else {
       pushLog(game, seat, '🎉 胡 ' + MJ.tileName(info.winTile) + '! ' + info.desc.join(' ') + ' (' + info.score + '分)');
     }
+    recordSnapshot(game, 'hu', pl.name + (fromSeat === seat ? ' 自摸胡【' : ' 胡【') + MJ.tileShortName(info.winTile) + '】(' + info.score + '分)', seat, {
+      actionTile: info.winTile,
+      info,
+    });
   }
 
   function pushLog(game, seat, msg) {
@@ -560,6 +645,7 @@
     game.turn = seat;
     game.phase = 'turn_act';
     pushLog(game, seat, '摸牌');
+    recordSnapshot(game, 'draw', pl.name + ' 摸牌【' + MJ.tileShortName(t) + '】', seat, { actionTile: t });
     return t;
   }
 
@@ -692,7 +778,9 @@
       if (allLackSet(game)) {
         game.phase = "turn_act";
         game.turn = game.dealer;
-        pushLog(game, -1, "定缺完成: " + game.players.map(p => p.name + "缺" + MJ.SUIT_NAMES[p.lack]).join(", "));
+        const lackMsg = "定缺完成: " + game.players.map(p => p.name + "缺" + MJ.SUIT_NAMES[p.lack]).join(", ");
+        pushLog(game, -1, lackMsg);
+        recordSnapshot(game, "lack", lackMsg, -1);
         return { need: "turn_act", seat: game.turn };
       }
       return { need: "humanLack" };
@@ -842,6 +930,7 @@
 
     game.results = res;
     game.phase = 'over';
+    recordSnapshot(game, 'settle', '本局终局结算', -1, { results: res });
     return res;
   }
 
@@ -881,6 +970,8 @@
     isHuaZhuCheck,
     checkTsumo,
     checkHuOnDiscard,
+    clonePlayer,
+    recordSnapshot,
     PLAYER_NAMES,
     SEAT_WINDS,
   };

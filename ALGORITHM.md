@@ -9,6 +9,8 @@
 
 ## 目录 (Table of Contents)
 
+10. [围棋级走法质量评估与时空快照复盘架构 (Game Review Architecture)](#10-围棋级走法质量评估与时空快照复盘架构-game-review-architecture)
+
 1. [背景与博弈论特性](#1-背景与博弈论特性)
 2. [游戏建模与离散状态机系统](#2-游戏建模与离散状态机系统)
 3. [向听数精算算法 (Shanten Calculation Engine)](#3-向听数精算算法-shanten-calculation-engine)
@@ -452,3 +454,41 @@ node js/test_coach_advisor.js
 1. **蒙特卡洛牌墙抽样 (MCTS Wall Sampling)**：在深水残局中引入确定性蒙特卡洛对局模拟。
 2. **多玩家读牌神经网络 (Opponent Hand Read Network)**：基于对手弃牌序列推断其具体手牌结构与听牌范围。
 3. **多人联机教学对战模式**：支持房间制 WebSocket 多人对战与观战教练模式。
+
+
+---
+
+## 10. 围棋级走法质量评估与时空快照复盘架构 (Game Review Architecture)
+
+### 10.1 走法质量分级数学模型
+
+借鉴 KataGo 与 Chess.com 评估模型，每一手玩家打出的牌 $d_{\text{actual}}$ 与 AI 精算最优打法 $d_{\text{best}}$ 进行向听数与进张面偏离精算：
+
+$$\Delta S = S(H \setminus \{d_{\text{actual}}\}) - S(H \setminus \{d_{\text{best}}\})$$
+
+$$\Delta U = U(H \setminus \{d_{\text{best}}\}) - U(H \setminus \{d_{\text{actual}}\})$$
+
+质量分级分类决策树：
+1. **强制定缺违背**：手牌存在缺门且 $d_{\text{actual}}[0] \ne \text{lack}$ $\Longrightarrow$ **【恶手 (Blunder)】**
+2. **最佳选择**：$d_{\text{actual}} = d_{\text{best}}$ $\Longrightarrow$ **【绝佳一手 (Best)】**
+3. **向听数倒退**：$\Delta S > 0$ $\Longrightarrow$ **【恶手 (Blunder)】**
+4. **有效进张严重损失**：$\Delta S = 0$ 且 $\Delta U \ge 4$ $\Longrightarrow$ **【疑问手 (Inaccuracy)】**
+5. **次优但差距极小**：$\Delta S = 0$ 且 $0 < \Delta U < 4$ $\Longrightarrow$ **【好手 (Good)】**
+
+### 10.2 整局雀力评分 (Accuracy Score) 统计公式
+
+整局准确率综合评分为人类所有出牌步数的加权得分平均值：
+
+$$\text{Accuracy} = \frac{\sum_{i=1}^N w(g_i)}{N} \times 100$$
+
+权重定义：$w(\text{Best}) = 1.0$, $w(\text{Good}) = 0.8$, $w(\text{Inaccuracy}) = 0.45$, $w(\text{Blunder}) = 0.0$。
+
+### 10.3 时空快照链 (History Snapshot Tree) 数据结构
+
+对局每一步流转（发牌、换三张、定缺、摸牌、出牌、碰、杠、胡、结算）生成不可变深拷贝快照：
+- `stepIndex`: 步数索引 (0 ~ $K$)
+- `phase`, `turn`, `wallCount`, `pendingDiscard`
+- `actionType`: deal | swap | lack | draw | discard | pung | kong | hu | settle
+- `actor`: 动作发起者座位号
+- `eval`: 走法质量评估元数据 (评级、理由、进张差、候选排行榜)
+- `players`: 4 家手牌、副露、弃牌与定缺的完整深拷贝隔离对象

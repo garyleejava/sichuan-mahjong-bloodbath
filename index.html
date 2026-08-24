@@ -39,6 +39,7 @@
         </select>
       </div>
       <button id="soundBtn" class="btn btn-icon" title="音效开关">🔊</button>
+      <button id="navReplayBtn" class="btn btn-secondary" title="进入历史对局深度复盘">📜 复盘</button>
       <button id="rulesBtn" class="btn btn-secondary">📖 规则与教程</button>
       <button id="newGameBtn" class="btn btn-primary">🔄 重开</button>
     </div>
@@ -292,6 +293,7 @@
       <div class="result-scroll" id="resultBody"></div>
       <div class="result-footer">
         <div class="total-summary" id="totalSummary"></div>
+        <button class="btn btn-coach btn-large" id="startReplayBtn">🔍 深度复盘本局</button>
         <button class="btn btn-primary btn-large" id="nextRoundBtn">下一局 ➔</button>
       </div>
     </div>
@@ -344,6 +346,165 @@
 
   <!-- 特效浮层 (胡牌/碰/杠) -->
   <div class="fx-layer pointer-none" id="fxLayer"></div>
+
+  <!-- 围棋级 AI 深度复盘与走法质量评估系统 (Replay Mode) -->
+  <div class="replay-overlay hidden" id="replayOverlay">
+    <!-- 复盘顶部控制栏 -->
+    <header class="replay-top-bar">
+      <div class="replay-brand">
+        <span class="brand-icon">🔍</span>
+        <span class="brand-title">四川麻将 · 围棋级 AI 深度复盘</span>
+      </div>
+
+      <!-- 雀力评分与评价 -->
+      <div class="replay-score-card" id="replayScoreCard">
+        <div class="replay-acc-score" id="replayAccScore">100</div>
+        <div class="replay-acc-info">
+          <div class="replay-acc-title" id="replayAccTitle">🏆 雀神附体 · 大师级掌控</div>
+          <div class="replay-acc-desc" id="replayAccDesc">做牌思路极其精准，有效进张最大化</div>
+        </div>
+      </div>
+
+      <!-- 走法分布胶囊 -->
+      <div class="replay-stats-pills">
+        <span class="replay-pill pill-best" id="pillBest">🌟 最佳 0</span>
+        <span class="replay-pill pill-good" id="pillGood">✨ 好手 0</span>
+        <span class="replay-pill pill-inaccuracy" id="pillInacc">⚠️ 疑问 0</span>
+        <span class="replay-pill pill-blunder" id="pillBlunder">❌ 恶手 0</span>
+      </div>
+
+      <!-- 右侧控制 -->
+      <div class="replay-top-actions">
+        <button id="godModeBtn" class="btn btn-god active" title="切换上帝视角：显示/隐藏对手手牌">👁️ 上帝视角: 开</button>
+        <button id="exitReplayBtn" class="btn btn-secondary" title="退出复盘返回牌桌">✕ 返回对局</button>
+      </div>
+    </header>
+
+    <!-- 复盘牌桌镜像 -->
+    <main class="table replay-table" id="replayTable">
+      <!-- 对家 (Top, 阿蓉) -->
+      <section class="seat seat-top" id="rSeat2">
+        <div class="seat-header">
+          <span class="avatar">🤖</span>
+          <span class="seat-name">阿蓉 (对家)</span>
+          <span class="seat-wind" id="rWind2">西</span>
+          <span class="seat-tag" id="rTag2"></span>
+          <span class="seat-score" id="rScore2">0</span>
+        </div>
+        <div class="melds" id="rMelds2"></div>
+        <div class="hand-closed" id="rClosed2"></div>
+        <div class="discards-container">
+          <div class="discards" id="rRiver2"></div>
+        </div>
+      </section>
+
+      <!-- 上家 (Left, 老李) -->
+      <section class="seat seat-left" id="rSeat3">
+        <div class="seat-header">
+          <span class="avatar">🤖</span>
+          <span class="seat-name">老李 (上家)</span>
+          <span class="seat-wind" id="rWind3">北</span>
+          <span class="seat-tag" id="rTag3"></span>
+          <span class="seat-score" id="rScore3">0</span>
+        </div>
+        <div class="melds" id="rMelds3"></div>
+        <div class="hand-closed" id="rClosed3"></div>
+        <div class="discards-container">
+          <div class="discards" id="rRiver3"></div>
+        </div>
+      </section>
+
+      <!-- 中心区域: 复盘走法质量评估看板 (Replay Move Quality HUD) -->
+      <section class="center-area replay-center-area">
+        <div class="replay-hud-card" id="replayHUDCard">
+          <div class="replay-hud-head">
+            <div class="replay-hud-step" id="rStepBadge">第 1 步 / 共 1 步</div>
+            <div class="replay-hud-badge grade-best" id="rGradeBadge">🌟 绝佳一手</div>
+          </div>
+          <div class="replay-hud-act-row">
+            <div class="replay-act-info" id="rActDesc">你 打出【九万】</div>
+            <div class="replay-eval-vs" id="rEvalVs"></div>
+          </div>
+          <div class="replay-hud-reason" id="rEvalReason">
+            正在精算本步牌理与向听数进张差...
+          </div>
+          <div class="replay-hud-candidates" id="rCandidateBox">
+            <div class="r-cand-title">候选手牌打法精算对比：</div>
+            <div class="r-cand-list" id="rCandList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 下家 (Right, 小川) -->
+      <section class="seat seat-right" id="rSeat1">
+        <div class="seat-header">
+          <span class="avatar">🤖</span>
+          <span class="seat-name">小川 (下家)</span>
+          <span class="seat-wind" id="rWind1">南</span>
+          <span class="seat-tag" id="rTag1"></span>
+          <span class="seat-score" id="rScore1">0</span>
+        </div>
+        <div class="melds" id="rMelds1"></div>
+        <div class="hand-closed" id="rClosed1"></div>
+        <div class="discards-container">
+          <div class="discards" id="rRiver1"></div>
+        </div>
+      </section>
+
+      <!-- 玩家自己 (Bottom, 屏幕下方) -->
+      <section class="seat seat-bottom" id="rSeat0">
+        <div class="discards-container human-river-wrap">
+          <div class="discards" id="rRiver0"></div>
+        </div>
+        <div class="human-controls-row">
+          <div class="seat-header">
+            <span class="avatar">🧑</span>
+            <span class="seat-name">你</span>
+            <span class="seat-wind" id="rWind0">东</span>
+            <span class="seat-tag" id="rTag0"></span>
+            <span class="seat-score" id="rScore0">0</span>
+          </div>
+          <div class="melds" id="rMelds0"></div>
+        </div>
+        <div class="hand human-hand" id="rHand0"></div>
+      </section>
+    </main>
+
+    <!-- 复盘底部时间轴控制器 (Replay Timeline Controller) -->
+    <footer class="replay-timeline-bar">
+      <!-- 进度条轨道与走法质量标记点 -->
+      <div class="replay-scrubber-wrap">
+        <div class="replay-markers-track" id="replayMarkersTrack"></div>
+        <input type="range" class="replay-slider" id="replayScrubber" min="0" max="0" value="0" step="1">
+      </div>
+
+      <!-- 控制按钮组 -->
+      <div class="replay-ctrl-row">
+        <div class="replay-step-info" id="replayStepInfo">步数 0 / 0</div>
+
+        <div class="replay-btn-group">
+          <button class="btn btn-icon btn-replay-ctrl" id="replayFirstBtn" title="跳转至第一步 [Home]">|◀</button>
+          <button class="btn btn-secondary btn-replay-ctrl" id="replayPrevBtn" title="上一步 [← 方向键]">◀ 上一步</button>
+          <button class="btn btn-primary btn-replay-play" id="replayPlayBtn" title="自动播放/暂停 [空格]">▶ 自动播放</button>
+          <button class="btn btn-secondary btn-replay-ctrl" id="replayNextBtn" title="下一步 [→ 方向键]">下一步 ▶</button>
+          <button class="btn btn-icon btn-replay-ctrl" id="replayLastBtn" title="跳转至最后一步 [End]">▶|</button>
+        </div>
+
+        <div class="replay-extra-group">
+          <button class="btn btn-mistake" id="replayMistakeBtn" title="一键跳转到下一个疑问手/恶手">⚠️ 寻错跳转</button>
+          <div class="select-group">
+            <label for="replaySpeedSelect">播放速度</label>
+            <select id="replaySpeedSelect">
+              <option value="slow">0.75x</option>
+              <option value="normal" selected>1.0x</option>
+              <option value="fast">1.5x</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
 </div>
 
 <script src="js/engine.js"></script>

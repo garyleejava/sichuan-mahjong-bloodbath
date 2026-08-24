@@ -839,6 +839,192 @@
     };
   }
 
+
+  // ============================================================
+  // ---- 10. 复盘走法质量评估与整局雀力分析引擎 (Game Review) ----
+  // ============================================================
+  function evaluateMoveQuality(handBefore, melds, lack, actualDiscard, gameSnapshot, seat) {
+    seat = seat !== undefined ? seat : 0;
+    const pl = {
+      hand: handBefore.slice(),
+      melds: (melds || []).map(m => ({ type: m.type, tiles: m.tiles.slice(), from: m.from, concealed: m.concealed })),
+      discards: [],
+      lack,
+      out: false,
+      isHuman: (seat === 0),
+    };
+
+    let mockGame = gameSnapshot;
+    if (!mockGame || !mockGame.players) {
+      mockGame = {
+        players: [
+          pl,
+          { hand: [], melds: [], discards: [], out: false },
+          { hand: [], melds: [], discards: [], out: false },
+          { hand: [], melds: [], discards: [], out: false },
+        ],
+        wall: new Array(60),
+        wallPtr: 0,
+        wallEnd: 0,
+      };
+    }
+
+    // 1. 定缺违规检查
+    const lackTiles = handBefore.filter(t => t[0] === lack);
+    if (lackTiles.length > 0 && actualDiscard[0] !== lack) {
+      return {
+        grade: "blunder",
+        gradeLabel: "恶手",
+        gradeText: "❌ 违规恶手 (违背强制定缺)",
+        badgeCls: "grade-blunder",
+        actualDiscard,
+        bestDiscard: lackTiles[0],
+        reason: "【严重恶手】手牌中尚有定缺【" + MJ.SUIT_NAMES[lack] + "】共 " + lackTiles.length + " 张！川麻核心规则强制必须优先打完缺门牌，否则终局流局将按【查花猪】赔满番 16 分！",
+        diffUkeire: 0,
+        diffShanten: 1,
+        ranking: [],
+      };
+    }
+
+    // 2. 雀神 AI 教练实时精算
+    const advice = analyzeHandAdvice(mockGame, seat);
+    const bestDiscard = advice.bestDiscard;
+    const bestCand = advice.bestAdvice;
+
+    if (actualDiscard === bestDiscard) {
+      return {
+        grade: "best",
+        gradeLabel: "最佳",
+        gradeText: "🌟 绝佳一手 (最佳选择)",
+        badgeCls: "grade-best",
+        actualDiscard,
+        bestDiscard,
+        reason: "【绝佳一手】精准打出【" + MJ.tileName(actualDiscard) + "】！进入【" + bestCand.afterShantenText + "】，有效进张 " + bestCand.ukeireCount + " 张最大化！",
+        diffUkeire: 0,
+        diffShanten: 0,
+        ranking: advice.ranking,
+      };
+    }
+
+    const match = advice.ranking && advice.ranking.find(r => r.tile === actualDiscard);
+    if (!match) {
+      return {
+        grade: "blunder",
+        gradeLabel: "恶手",
+        gradeText: "❌ 恶手 (严重失误)",
+        badgeCls: "grade-blunder",
+        actualDiscard,
+        bestDiscard,
+        reason: "【恶手】打出【" + MJ.tileName(actualDiscard) + "】严重偏离最优路线。推荐打出【" + MJ.tileName(bestDiscard) + "】。",
+        diffUkeire: 10,
+        diffShanten: 1,
+        ranking: advice.ranking,
+      };
+    }
+
+    const diffShanten = match.afterShanten - bestCand.afterShanten;
+    const diffUkeire = bestCand.ukeireCount - match.ukeireCount;
+
+    if (diffShanten > 0) {
+      return {
+        grade: "blunder",
+        gradeLabel: "恶手",
+        gradeText: "❌ 恶手 (向听数倒退)",
+        badgeCls: "grade-blunder",
+        actualDiscard,
+        bestDiscard,
+        reason: "【恶手警告】你打出了【" + MJ.tileName(actualDiscard) + "】，导致手牌向听数由【" + bestCand.afterShantenText + "】倒退为【" + match.afterShantenText + "】（损失 " + diffUkeire + " 张有效进张）！拆散了关键顺子或搭子。AI 推荐打出【" + MJ.tileName(bestDiscard) + "】。",
+        diffUkeire,
+        diffShanten,
+        ranking: advice.ranking,
+      };
+    }
+
+    if (diffUkeire > 3) {
+      return {
+        grade: "inaccuracy",
+        gradeLabel: "疑问手",
+        gradeText: "⚠️ 疑问手 (次优选择)",
+        badgeCls: "grade-inaccuracy",
+        actualDiscard,
+        bestDiscard,
+        reason: "【疑问手】你打出了【" + MJ.tileName(actualDiscard) + "】（有效进张 " + match.ukeireCount + " 张）；若打出推荐的【" + MJ.tileName(bestDiscard) + "】可拥有 " + bestCand.ukeireCount + " 张有效进张（多出 " + diffUkeire + " 张进张机会）。",
+        diffUkeire,
+        diffShanten,
+        ranking: advice.ranking,
+      };
+    }
+
+    return {
+      grade: "good",
+      gradeLabel: "好手",
+      gradeText: "✨ 好手 (优质走法)",
+      badgeCls: "grade-good",
+      actualDiscard,
+      bestDiscard,
+      reason: "【好手】打出【" + MJ.tileName(actualDiscard) + "】保持【" + match.afterShantenText + "】，有效进张 " + match.ukeireCount + " 张，与最佳打法差距极小。",
+      diffUkeire,
+      diffShanten,
+      ranking: advice.ranking,
+    };
+  }
+
+  function summarizeGameReview(history) {
+    let bestCount = 0;
+    let goodCount = 0;
+    let inaccuracyCount = 0;
+    let blunderCount = 0;
+    let totalHumanDiscards = 0;
+    const mistakeSteps = [];
+
+    (history || []).forEach((frame, idx) => {
+      if (frame.actionType === "discard" && frame.actor === 0 && frame.eval) {
+        totalHumanDiscards++;
+        const g = frame.eval.grade;
+        if (g === "best") bestCount++;
+        else if (g === "good") goodCount++;
+        else if (g === "inaccuracy") {
+          inaccuracyCount++;
+          mistakeSteps.push(idx);
+        } else if (g === "blunder") {
+          blunderCount++;
+          mistakeSteps.push(idx);
+        }
+      }
+    });
+
+    let accuracy = 100;
+    if (totalHumanDiscards > 0) {
+      const scoreSum = bestCount * 100 + goodCount * 80 + inaccuracyCount * 45 + blunderCount * 0;
+      accuracy = Math.round(scoreSum / totalHumanDiscards);
+    }
+
+    let title = "🏆 雀神附体 · 大师级手牌掌控";
+    let desc = "本局做牌思路极其精准，有效进张最大化，攻守兼备！";
+    if (accuracy < 60) {
+      title = "🌱 尚需打磨 · 建议巩固定缺与牌效";
+      desc = "本局存在较多恶手或向听数倒退，多利用复盘排查关键失误点。";
+    } else if (accuracy < 75) {
+      title = "⚡ 进退有度 · 进阶实战水准";
+      desc = "整体牌理较好，注意减少几手关键的疑问手，进张会更加流畅。";
+    } else if (accuracy < 90) {
+      title = "🎖️ 行云流水 · 职业级牌理";
+      desc = "发挥十分出色，大部分出牌均与雀神 AI 精算高度契合！";
+    }
+
+    return {
+      accuracy,
+      title,
+      desc,
+      bestCount,
+      goodCount,
+      inaccuracyCount,
+      blunderCount,
+      totalHumanDiscards,
+      mistakeSteps,
+    };
+  }
+
   const AI = {
     chooseLack,
     evalSuitStructure,
@@ -853,6 +1039,8 @@
     chooseSwap3InSuit,
     evalTileKeepValue,
     analyzeHandAdvice,
+    evaluateMoveQuality,
+    summarizeGameReview,
     LEVELS,
   };
 

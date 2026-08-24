@@ -280,6 +280,29 @@
       };
     });
 
+    // 复盘模式事件绑定
+    if ($('navReplayBtn')) $('navReplayBtn').onclick = () => startReplay();
+    if ($('startReplayBtn')) $('startReplayBtn').onclick = () => {
+      $('resultModal').classList.add('hidden');
+      startReplay();
+    };
+    if ($('exitReplayBtn')) $('exitReplayBtn').onclick = () => exitReplay();
+    if ($('godModeBtn')) $('godModeBtn').onclick = () => toggleGodMode();
+    if ($('replayPlayBtn')) $('replayPlayBtn').onclick = () => toggleReplayAutoPlay();
+    if ($('replayPrevBtn')) $('replayPrevBtn').onclick = () => replayPrev();
+    if ($('replayNextBtn')) $('replayNextBtn').onclick = () => replayNext();
+    if ($('replayFirstBtn')) $('replayFirstBtn').onclick = () => replayFirst();
+    if ($('replayLastBtn')) $('replayLastBtn').onclick = () => replayLast();
+    if ($('replayMistakeBtn')) $('replayMistakeBtn').onclick = () => replayJumpMistake();
+    if ($('replayScrubber')) $('replayScrubber').oninput = (e) => replayGoTo(+e.target.value);
+    if ($('replaySpeedSelect')) $('replaySpeedSelect').onchange = (e) => {
+      replaySpeed = e.target.value;
+      if (replayAutoPlayTimer) {
+        toggleReplayAutoPlay();
+        toggleReplayAutoPlay();
+      }
+    };
+
     // 键盘全局快捷键
     window.addEventListener('keydown', onKeyDown);
 
@@ -290,6 +313,19 @@
   function onKeyDown(e) {
     if (e.repeat) return;
     const key = e.key;
+
+    // 复盘模式专属快捷键
+    if (isReplayActive) {
+      if (key === "ArrowLeft") { replayPrev(); return; }
+      if (key === "ArrowRight") { replayNext(); return; }
+      if (key === " " || key === "Enter") { toggleReplayAutoPlay(); return; }
+      if (key === "Home") { replayFirst(); return; }
+      if (key === "End") { replayLast(); return; }
+      if (key === "m" || key === "M") { replayJumpMistake(); return; }
+      if (key === "g" || key === "G") { toggleGodMode(); return; }
+      if (key === "Escape") { exitReplay(); return; }
+      return;
+    }
 
     // T: 切换雀神 AI 教练
     if (key === 't' || key === 'T') {
@@ -1367,4 +1403,412 @@
 
   // 初始化入口
   window.addEventListener('DOMContentLoaded', init);
+
+  // ============================================================
+  // ---- 14. 围棋级 AI 深度复盘与走法质量评估系统 (Replay Mode) ----
+  // ============================================================
+  let isReplayActive = false;
+  let replayStep = 0;
+  let replayAutoPlayTimer = null;
+  let replayGodMode = true;
+  let replaySpeed = "normal"; // slow: 1200ms, normal: 750ms, fast: 350ms
+  let replayReviewSummary = null;
+
+  const REPLAY_SPEED_MAP = {
+    slow: 1200,
+    normal: 750,
+    fast: 350,
+  };
+
+  function startReplay(initialStepIndex) {
+    if (!game || !game.history || game.history.length === 0) {
+      flashLog("暂无历史对局数据可供复盘！");
+      return;
+    }
+
+    playSound("btn");
+    isReplayActive = true;
+    hideAllModals();
+
+    // 1. 精算全局雀力与好恶手分析
+    replayReviewSummary = MJAI.summarizeGameReview(game.history);
+
+    // 2. 渲染顶部雀力看板与走法分布
+    const s = replayReviewSummary;
+    $("replayAccScore").textContent = s.accuracy;
+    $("replayAccTitle").textContent = s.title;
+    $("replayAccDesc").textContent = s.desc;
+
+    $("pillBest").textContent = "🌟 最佳 " + s.bestCount;
+    $("pillGood").textContent = "✨ 好手 " + s.goodCount;
+    $("pillInacc").textContent = "⚠️ 疑问 " + s.inaccuracyCount;
+    $("pillBlunder").textContent = "❌ 恶手 " + s.blunderCount;
+
+    // 3. 设置时间轴进度条
+    const maxStep = game.history.length - 1;
+    const scrubber = $("replayScrubber");
+    scrubber.min = 0;
+    scrubber.max = maxStep;
+    
+    // 渲染时间轴上的走法质量彩色标记点
+    renderTimelineMarkers(game.history);
+
+    // 4. 定位初始步数 (默认定位到第一步或指定的步数)
+    replayStep = (initialStepIndex !== undefined) ? Math.max(0, Math.min(maxStep, initialStepIndex)) : 0;
+    scrubber.value = replayStep;
+
+    // 5. 显示复盘浮层
+    $("replayOverlay").classList.remove("hidden");
+
+    // 6. 渲染初始帧
+    renderReplayFrame(replayStep);
+  }
+
+  function renderTimelineMarkers(history) {
+    const track = $("replayMarkersTrack");
+    if (!track) return;
+    track.innerHTML = "";
+    const total = history.length - 1;
+    if (total <= 0) return;
+
+    history.forEach((frame, idx) => {
+      if (frame.actionType === "discard" && frame.actor === 0 && frame.eval) {
+        const dot = document.createElement("div");
+        dot.className = "timeline-marker " + frame.eval.grade;
+        const leftPercent = (idx / total) * 100;
+        dot.style.left = leftPercent + "%";
+        dot.title = "第 " + idx + " 步: " + frame.eval.gradeLabel + " (" + MJ.tileName(frame.actionTile) + ")";
+        dot.onclick = (e) => {
+          e.stopPropagation();
+          replayGoTo(idx);
+        };
+        track.appendChild(dot);
+      }
+    });
+  }
+
+  function replayGoTo(stepIdx) {
+    if (!game || !game.history) return;
+    const maxStep = game.history.length - 1;
+    replayStep = Math.max(0, Math.min(maxStep, stepIdx));
+    $("replayScrubber").value = replayStep;
+    renderReplayFrame(replayStep);
+    playSound("tap");
+  }
+
+  function replayNext() {
+    if (!isReplayActive || !game || !game.history) return;
+    const maxStep = game.history.length - 1;
+    if (replayStep < maxStep) {
+      replayStep++;
+      $("replayScrubber").value = replayStep;
+      renderReplayFrame(replayStep);
+      playSound("tap");
+    } else {
+      if (replayAutoPlayTimer) toggleReplayAutoPlay();
+    }
+  }
+
+  function replayPrev() {
+    if (!isReplayActive || !game || !game.history) return;
+    if (replayStep > 0) {
+      replayStep--;
+      $("replayScrubber").value = replayStep;
+      renderReplayFrame(replayStep);
+      playSound("tap");
+    }
+  }
+
+  function replayFirst() {
+    replayGoTo(0);
+  }
+
+  function replayLast() {
+    if (!game || !game.history) return;
+    replayGoTo(game.history.length - 1);
+  }
+
+  function toggleReplayAutoPlay() {
+    const btn = $("replayPlayBtn");
+    if (replayAutoPlayTimer) {
+      clearInterval(replayAutoPlayTimer);
+      replayAutoPlayTimer = null;
+      btn.textContent = "▶ 自动播放";
+      btn.classList.remove("active");
+    } else {
+      const maxStep = game.history.length - 1;
+      if (replayStep >= maxStep) replayStep = 0;
+      btn.textContent = "❚❚ 暂停播放";
+      btn.classList.add("active");
+      const interval = REPLAY_SPEED_MAP[replaySpeed] || 750;
+      replayAutoPlayTimer = setInterval(() => {
+        if (replayStep >= maxStep) {
+          toggleReplayAutoPlay();
+          return;
+        }
+        replayNext();
+      }, interval);
+    }
+  }
+
+  function replayJumpMistake() {
+    if (!replayReviewSummary || !replayReviewSummary.mistakeSteps || replayReviewSummary.mistakeSteps.length === 0) {
+      flashLog("太棒了！本局未发现任何疑问手或恶手！");
+      return;
+    }
+    const mistakes = replayReviewSummary.mistakeSteps;
+    let nextMistake = mistakes.find(idx => idx > replayStep);
+    if (nextMistake === undefined) {
+      nextMistake = mistakes[0];
+    }
+    replayGoTo(nextMistake);
+    flashLog("已跳转至第 " + nextMistake + " 步失误位置");
+  }
+
+  function toggleGodMode() {
+    replayGodMode = !replayGodMode;
+    const btn = $("godModeBtn");
+    if (btn) {
+      btn.classList.toggle("active", replayGodMode);
+      btn.textContent = replayGodMode ? "👁️ 上帝视角: 开" : "👁️ 上帝视角: 关";
+    }
+    playSound("btn");
+    renderReplayFrame(replayStep);
+  }
+
+  function exitReplay() {
+    if (replayAutoPlayTimer) {
+      clearInterval(replayAutoPlayTimer);
+      replayAutoPlayTimer = null;
+    }
+    isReplayActive = false;
+    $("replayOverlay").classList.add("hidden");
+    playSound("btn");
+
+    if (game.phase === "over" && game.results) {
+      showResultModal(game.results);
+    } else {
+      render();
+    }
+  }
+
+  function renderReplayFrame(stepIdx) {
+    if (!game || !game.history || !game.history[stepIdx]) return;
+    const frame = game.history[stepIdx];
+    const totalSteps = game.history.length - 1;
+
+    // 1. 步数信息
+    $("replayStepInfo").textContent = "第 " + stepIdx + " / " + totalSteps + " 步";
+    $("rStepBadge").textContent = "第 " + stepIdx + " 步 · " + frame.desc;
+
+    // 2. 渲染 4 个座位的历史快照
+    for (let i = 0; i < 4; i++) {
+      renderReplaySeat(i, frame);
+    }
+
+    // 3. 渲染中心走法质量与 AI 教练看板
+    renderReplayHUD(frame);
+  }
+
+  function renderReplaySeat(seatIdx, frame) {
+    const pl = frame.players[seatIdx];
+    const seatEl = $("rSeat" + seatIdx);
+    if (!seatEl || !pl) return;
+
+    // 行动高亮
+    const isCurrentActor = (frame.actor === seatIdx);
+    seatEl.classList.toggle("active", isCurrentActor);
+
+    // 标签与积分
+    const windEl = $("rWind" + seatIdx);
+    if (windEl) windEl.textContent = pl.wind;
+
+    const tagEl = $("rTag" + seatIdx);
+    if (tagEl) {
+      tagEl.className = "seat-tag";
+      if (pl.out) {
+        tagEl.textContent = "已胡";
+        tagEl.classList.add("out");
+      } else if (pl.lack) {
+        tagEl.textContent = "缺" + MJ.SUIT_NAMES[pl.lack];
+        tagEl.classList.add("lack");
+      } else {
+        tagEl.textContent = "";
+      }
+    }
+
+    // 副露
+    const meldsEl = $("rMelds" + seatIdx);
+    meldsEl.innerHTML = "";
+    (pl.melds || []).forEach(m => {
+      const grp = document.createElement("div");
+      grp.className = "meld-group";
+      m.tiles.forEach(t => {
+        const tileEl = createTileElement(t, "small");
+        if (m.concealed && !replayGodMode && seatIdx !== 0) tileEl.classList.add("back");
+        grp.appendChild(tileEl);
+      });
+      meldsEl.appendChild(grp);
+    });
+
+    // 弃牌河
+    const riverEl = $("rRiver" + seatIdx);
+    riverEl.innerHTML = "";
+    (pl.discards || []).forEach((t, dIdx) => {
+      const tileEl = createTileElement(t, "tiny");
+      if (frame.actionType === "discard" && frame.actor === seatIdx && dIdx === pl.discards.length - 1) {
+        tileEl.classList.add("last-discard");
+      }
+      riverEl.appendChild(tileEl);
+    });
+
+    // 手牌
+    if (seatIdx === 0) {
+      const handEl = $("rHand0");
+      handEl.innerHTML = "";
+      pl.hand.forEach((t, idx) => {
+        const tileEl = createTileElement(t, "");
+        if (pl.lack && t[0] === pl.lack) tileEl.classList.add("lack-suit");
+        if (frame.actionType === "draw" && frame.actor === 0 && idx === pl.hand.length - 1 && pl.hand.length % 3 === 2) {
+          tileEl.classList.add("drawn");
+        }
+        if (frame.actionTile === t && frame.actor === 0) {
+          tileEl.classList.add("selected");
+        }
+        tileEl.onmouseenter = () => highlightMatchingTiles(t);
+        tileEl.onmouseleave = () => clearMatchingHighlights();
+        handEl.appendChild(tileEl);
+      });
+    } else {
+      const closedEl = $("rClosed" + seatIdx);
+      closedEl.innerHTML = "";
+      pl.hand.forEach((t, idx) => {
+        const tileEl = createTileElement(replayGodMode ? t : null, "small");
+        if (!replayGodMode) {
+          tileEl.classList.add("back");
+        } else {
+          if (pl.lack && t[0] === pl.lack) tileEl.classList.add("lack-suit");
+        }
+        if (frame.actionType === "draw" && frame.actor === seatIdx && idx === pl.hand.length - 1 && pl.hand.length % 3 === 2) {
+          tileEl.classList.add("drawn");
+        }
+        if (replayGodMode) {
+          tileEl.onmouseenter = () => highlightMatchingTiles(t);
+          tileEl.onmouseleave = () => clearMatchingHighlights();
+        }
+        closedEl.appendChild(tileEl);
+      });
+    }
+  }
+
+  function renderReplayHUD(frame) {
+    const badgeEl = $("rGradeBadge");
+    const actDescEl = $("rActDesc");
+    const evalVsEl = $("rEvalVs");
+    const reasonEl = $("rEvalReason");
+    const candBox = $("rCandidateBox");
+    const candList = $("rCandList");
+
+    candList.innerHTML = "";
+
+    // 人类出牌并包含走法质量评估
+    if (frame.actionType === "discard" && frame.actor === 0 && frame.eval) {
+      const ev = frame.eval;
+      badgeEl.className = "replay-hud-badge " + ev.badgeCls;
+      badgeEl.textContent = ev.gradeText;
+
+      actDescEl.innerHTML = "你的出牌：【<strong>" + MJ.tileName(ev.actualDiscard) + "</strong>】";
+      if (ev.actualDiscard !== ev.bestDiscard) {
+        evalVsEl.innerHTML = "AI 推荐：【<span style='color:#86efac;font-weight:800;'>" + MJ.tileName(ev.bestDiscard) + "</span>】";
+      } else {
+        evalVsEl.innerHTML = "<span style='color:#86efac;font-weight:800;'>★ 与 AI 最优精算一致</span>";
+      }
+
+      reasonEl.innerHTML = ev.reason;
+
+      // 渲染候选打法排行榜
+      if (ev.ranking && ev.ranking.length > 0) {
+        candBox.style.display = "flex";
+        ev.ranking.slice(0, 3).forEach(cand => {
+          const item = document.createElement("div");
+          item.className = "coach-comp-item";
+          const isBest = (cand.tile === ev.bestDiscard);
+          const isActual = (cand.tile === ev.actualDiscard);
+          const bg = (cand.tile[0] === "m" ? "#991b1b" : (cand.tile[0] === "p" ? "#166534" : "#075985"));
+          const color = (isBest ? "#86efac" : (isActual ? "#fbbf24" : "#e2e8f0"));
+          const diffText = (isBest ? "★ 最佳" : (isActual ? "◀ 你的选择" : ""));
+          
+          item.innerHTML = 
+            "<div class='coach-comp-left'>" +
+              "<span class='tile-mini' style='background:" + bg + "'>" + MJ.tileFace(cand.tile) + "</span>" +
+              "<span style='font-weight:700;color:" + color + "'>" + MJ.tileShortName(cand.tile) + "</span>" +
+              "<span style='font-size:10px;opacity:0.8;'>" + cand.tag + "</span>" +
+            "</div>" +
+            "<div class='coach-comp-right'>" +
+              "<span style='color:#7dd3fc;'>" + cand.afterShantenText + " (" + cand.ukeireCount + "张)</span>" +
+              "<span class='coach-comp-diff'>" + diffText + "</span>" +
+            "</div>";
+          candList.appendChild(item);
+        });
+      } else {
+        candBox.style.display = "none";
+      }
+      return;
+    }
+
+    // 其他阶段 (发牌、换三张、定缺、摸牌、电脑出牌、副露、结算)
+    candBox.style.display = "none";
+    badgeEl.className = "replay-hud-badge grade-good";
+
+    if (frame.actionType === "deal") {
+      badgeEl.textContent = "🀄 开局发牌";
+      actDescEl.innerHTML = "系统完成洗牌与 4 家起手配牌";
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "4 家各发 13 张手牌。若开启换三张规则，准备进入同门选 3 张阶段。";
+    } else if (frame.actionType === "swap") {
+      badgeEl.textContent = "🔀 换三张";
+      actDescEl.innerHTML = frame.desc;
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "换三张拓扑转移完成。核心做牌思路为优先清空少张杂牌门，加速开局定缺与上听。";
+    } else if (frame.actionType === "lack") {
+      badgeEl.textContent = "🀄 强制定缺";
+      actDescEl.innerHTML = frame.desc;
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "4 家均已确定本局定缺门。川麻强制优先打完缺门花色，未打完缺门不可胡牌。";
+    } else if (frame.actionType === "draw") {
+      const plName = frame.players[frame.actor].name;
+      badgeEl.textContent = "📥 摸牌";
+      actDescEl.innerHTML = plName + " 摸入【<strong>" + MJ.tileName(frame.actionTile) + "</strong>】";
+      evalVsEl.innerHTML = "牌墙余 " + frame.wallCount + " 张";
+      reasonEl.innerHTML = plName + " 手牌进张，进入出牌与副露思考。";
+    } else if (frame.actionType === "discard") {
+      const plName = frame.players[frame.actor].name;
+      badgeEl.textContent = "📤 电脑出牌";
+      actDescEl.innerHTML = plName + " 打出【<strong>" + MJ.tileName(frame.actionTile) + "</strong>】";
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "对手打出【" + MJ.tileName(frame.actionTile) + "】。全桌进入副露（碰/杠/胡/过）裁决阶段。";
+    } else if (frame.actionType === "pung") {
+      badgeEl.textContent = "⚡ 碰牌";
+      actDescEl.innerHTML = frame.desc;
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "形成一组碰牌副露，手牌张数减少 3 张，轮到该玩家出牌。";
+    } else if (frame.actionType === "kong") {
+      badgeEl.textContent = "💥 杠牌 (刮风下雨)";
+      actDescEl.innerHTML = frame.desc;
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "触发杠牌并结算杠分，随后从牌墙尾部摸一张补牌。";
+    } else if (frame.actionType === "hu") {
+      badgeEl.className = "replay-hud-badge grade-best";
+      badgeEl.textContent = "🎉 胡牌收分";
+      actDescEl.innerHTML = frame.desc;
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "血战到底：胡牌者锁定胜利番数并退出，未胡牌玩家继续摸打！";
+    } else if (frame.actionType === "settle") {
+      badgeEl.textContent = "🏁 终局结算";
+      actDescEl.innerHTML = "本局血战到底对局结束";
+      evalVsEl.innerHTML = "";
+      reasonEl.innerHTML = "全局终局结算完成（查花猪、查大叫、杠分退税）。点击时间轴或寻错按钮可复盘整局每一手关键打法！";
+    }
+  }
+
 })();

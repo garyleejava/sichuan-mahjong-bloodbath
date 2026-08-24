@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node js/test_suite.js && node js/test_e2e_flow.js && node js/test_coach_advisor.js"
+    "test": "node js/test_coach_advisor.js && node js/test_replay.js && node js/test_e2e_flow.js",
+    "test:all": "node js/test_suite.js && node js/test_swap.js && node js/test_coach_advisor.js && node js/test_replay.js && node js/test_e2e_flow.js"
   },
   "keywords": [
     "mahjong",
